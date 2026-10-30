@@ -11,6 +11,7 @@ export const Config = Schema.intersect([
       persona: Schema.string().default('自然、温和、有自己的兴趣。根据共同经历交流；没有依据时不假装记得。'),
       maxMessages: Schema.number().min(1).max(4).step(1).default(3),
       intervalMs: Schema.number().min(0).max(10000).default(1200),
+      burstWindowMs: Schema.number().min(0).max(1200).step(1).default(800).description('同一人连续普通文本的合并等待；0 关闭，连续等待最多 2 秒；不改变主动聊天频率'),
       autoMemory: Schema.boolean().default(true).description('自动整理有原文证据的兴趣、偏好与约定，可在聊天中关闭'),
       turnTimeoutMs: Schema.number().min(1000).max(300000).default(120000),
     }).default({}),

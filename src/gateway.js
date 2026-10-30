@@ -15,6 +15,7 @@ import { AutonomyEngine, createAutonomyTasks } from './autonomy.js';
 import { DialogueStore, DialogueContext } from './dialogue.js';
 import { LocalEmbedder, SemanticMemory } from './semantic.js';
 import { appraiseInteraction } from './appraisal.js';
+import { TurnScheduler } from './pacing.js';
 
 export function createTransport(bot, store) {
   return async (message, target) => {
@@ -63,11 +64,17 @@ export async function startGateway(ctx, config, dependencies = {}) {
   const allowedFiles = new WeakMap();
   const fileKinds = new WeakMap();
   const active = new Map();
-  const pending = new Map();
-  const queued = new Map();
   const sentEvents = new WeakSet();
   const toolNames = [];
-  const register = definition => { ctx.get('tools').register(definition); toolNames.push(definition.name); runtime.toolNames.add(definition.name); };
+  const register = definition => {
+    ctx.get('tools').register({ ...definition, async execute(args, exec) {
+      const e = runtime.contexts.get(exec.agent);
+      e?.signal?.throwIfAborted();
+      if (e) e.toolStarted = true;
+      return definition.execute(args, exec);
+    } });
+    toolNames.push(definition.name); runtime.toolNames.add(definition.name);
+  };
   runtime.toolNames.clear();
   let stopping = false;
   const bot = dependencies.bot ?? new QQBot({ appId: config.appId, appSecret: config.appSecret,
@@ -114,7 +121,7 @@ export async function startGateway(ctx, config, dependencies = {}) {
   if (embedder) { runtime.semantic = new SemanticMemory(runtime.store, embedder, config.semantic); void embedder.start?.().catch(() => logger.warn('companion: 本机语义模型尚未就绪，暂用文字匹配；可查看 /记忆状态。')); }
   const indexingStop = new AbortController(); let indexing; let ownerCursor = 0;
   const indexTick = () => {
-    if (!runtime.semantic || indexing || stopping || queued.size || embedder.status === 'unavailable') return;
+    if (!runtime.semantic || indexing || stopping || pacing.size || embedder.status === 'unavailable') return;
     const owners = runtime.store.memoryOwners().filter(([app, scope, target]) => app === config.appId && config.access[`${scope}Allow`]?.includes(target));
     if (!owners.length) return;
     const [appId, scope, targetId, senderId] = owners[ownerCursor++ % owners.length];
@@ -132,7 +139,7 @@ export async function startGateway(ctx, config, dependencies = {}) {
   const autonomy = new AutonomyEngine({ config, store: autonomyStore, memory: runtime.store,
     dialogue: config.dialogue.enabled ? dialogue : undefined,
     tasks: dependencies.autonomyTasks ?? createAutonomyTasks({ ctx, config, vision, directory: mediaDir, route: () => manager.getEffectiveModel('group', 'autonomy') }),
-    busy: (scope, targetId) => (queued.get(conversation({ appId: config.appId, scope, targetId })) ?? 0) > 0,
+    busy: (scope, targetId) => pacing.busy({ appId: config.appId, scope, targetId }),
     permission: async (target, signal) => {
       try {
         const token = await bot.tokenManager.getAccessToken(config.appId, config.appSecret); signal.throwIfAborted();
@@ -166,7 +173,7 @@ export async function startGateway(ctx, config, dependencies = {}) {
     const text = event.data?.message?.content?.filter(b => b.type === 'text').map(b => b.text).join('\n');
     if (text) {
       runtime.store.observe(e.scope, 'model:reply', 'verified');
-      void runtime.sendText(e, text, transport).catch(() => logger.warn('companion: 回复已阻止或发送失败。'));
+      void runtime.sendText(e, text, transport, { generated: true }).catch(() => logger.warn('companion: 回复已阻止或发送失败。'));
     }
   }, { global: true });
 
@@ -175,6 +182,7 @@ export async function startGateway(ctx, config, dependencies = {}) {
   bot.use(messageFilter({ skipSelfEcho: true }));
   bot.use(async (mCtx, next) => {
     const m = mCtx.message;
+    pacing.noteSpeaker(envelope(config.appId, m));
     autonomy.noteActivity(m.kind, m.kind === 'group' ? m.groupOpenid : m.senderId);
     if (config.dialogue.enabled && m.kind === 'group' && !m.senderIsBot) {
       try { const e = envelope(config.appId, m); if (runtime.store.profile(e).auto_memory) dialogueStore.observe(e); } catch { /* 格式不完整的群消息不进入上下文。 */ }
@@ -183,27 +191,16 @@ export async function startGateway(ctx, config, dependencies = {}) {
   });
   bot.use(mentionGate({ requireMentionInGroup: config.requireMention }));
   bot.use(contentSanitizer({ parseFaceTags: true, transform: (text, mCtx) => normalizeCommandMentions(text, mCtx.message, mCtx.state.mention?.wasMentioned) }));
-  // 同群不同人的事件逐条处理，禁止 merge 后丢失真正的发送者。
-  bot.use(async (mCtx, next) => {
-    const received = runtime.receive(config.appId, mCtx.message);
-    if (!received) return;
-    const e = { ...received };
-    if (e.text.trim() === '/取消') {
-      const running = active.get(partition(e));
-      running?.controller.abort(new Error('USER_CANCELLED'));
-      await runtime.sendText(e, running ? '已取消你当前的任务。已经发出的消息无法撤回。' : '你当前没有正在处理的任务。', transport);
-      runtime.store.finish(e); return;
-    }
-    const key = conversation(e);
-    if ((queued.get(key) ?? 0) >= config.maxQueue) { runtime.store.finish(e, 'queue-full'); return; }
-    queued.set(key, (queued.get(key) ?? 0) + 1);
-    const task = (pending.get(key) ?? Promise.resolve()).catch(() => {}).then(async () => {
-      if (stopping) { runtime.store.finish(e, 'stopped'); return; }
-      const controller = new AbortController();
+  const pacing = new TurnScheduler({
+    windowMs: config.companion.burstWindowMs, maxQueue: config.maxQueue,
+    finish: (e, state) => runtime.store.finish(e, state),
+    canReplace: e => !e.toolStarted && !runtime.store.used(e) && !e.responseComplete,
+    run: async ({ mCtx, next }, e, controller) => {
+      if (stopping) return 'stopped';
       const turn = { controller, agent: undefined };
       active.set(partition(e), turn);
-      e.signal = controller.signal; mCtx.state.signal = e.signal;
-      mCtx.state.companionEnvelope = e;
+      mCtx.message = { ...mCtx.message, content: e.text };
+      mCtx.state.signal = e.signal; mCtx.state.companionEnvelope = e;
       let abortListener;
       const aborted = new Promise((_, reject) => {
         abortListener = () => {
@@ -214,12 +211,12 @@ export async function startGateway(ctx, config, dependencies = {}) {
         controller.signal.addEventListener('abort', abortListener, { once: true });
       });
       const timer = setTimeout(() => controller.abort(new Error('TURN_TIMEOUT')), config.companion.turnTimeoutMs);
-      try { await Promise.race([next(), aborted]); runtime.store.finish(e, e.modelFailed ? 'model-failed' : 'handled'); }
-      catch {
-        runtime.store.finish(e, e.signal.aborted ? 'cancelled' : 'failed');
+      try { await Promise.race([next(), aborted]); return e.modelFailed ? 'model-failed' : 'handled'; }
+      catch (error) {
         if (e.signal.aborted) runtime.store.resetContext(e);
         else logger.error('companion: 本轮处理失败，未自动重放。');
-        if (!stopping && e.signal.reason?.message !== 'USER_CANCELLED') await runtime.sendText({ ...e, signal: undefined }, '这次处理没有完成，请稍后再试。', transport);
+        if (!stopping && !['USER_CANCELLED', 'SUPERSEDED'].includes(e.signal.reason?.message)) await runtime.sendText({ ...e, signal: undefined }, '这次处理没有完成，请稍后再试。', transport);
+        throw error;
       } finally {
         clearTimeout(timer); controller.signal.removeEventListener('abort', abortListener);
         if (active.get(partition(e)) === turn) active.delete(partition(e));
@@ -231,13 +228,17 @@ export async function startGateway(ctx, config, dependencies = {}) {
           }
         }
       }
-    });
-    pending.set(key, task);
-    try { await task; } finally {
-      const remaining = (queued.get(key) ?? 1) - 1;
-      if (remaining) queued.set(key, remaining); else queued.delete(key);
-      if (pending.get(key) === task) pending.delete(key);
+    },
+  });
+  bot.use(async (mCtx, next) => {
+    const e = runtime.receive(config.appId, mCtx.message);
+    if (!e) return;
+    if (e.text.trim() === '/取消') {
+      const count = pacing.cancel(e);
+      await runtime.sendText(e, count ? '已取消你正在处理和排队的任务。已经发出的消息无法撤回。' : '你当前没有正在处理的任务。', transport);
+      runtime.store.finish(e); return;
     }
+    await pacing.enqueue({ e, mCtx, next });
   });
   bot.use(attachmentMiddleware(config, runtime, mediaDir));
   bot.on('message', async mCtx => {
@@ -311,6 +312,7 @@ export async function startGateway(ctx, config, dependencies = {}) {
       await upstream.handleInbound({ ...mCtx, bot: { sendMarkdown: (_target, text) => runtime.sendText(e, text, transport) } }, facade, config, safeLogger);
       await runtime.queue.tails.get(conversation(e));
       e.signal.throwIfAborted();
+      e.responseComplete = true;
       const llm = ctx.get('llm');
       if (!e.modelFailed && llm?.stream) {
         try { await consolidateMemory(runtime, e, llm, manager.getEffectiveModel(e.scope, peerKey(e)), e.signal); }
@@ -335,10 +337,10 @@ export async function startGateway(ctx, config, dependencies = {}) {
     stopping = true; bot.stop();
     clearInterval(autonomyTimer); clearTimeout(autonomyStart);
     clearInterval(indexingTimer); clearTimeout(indexingStart); indexingStop.abort(); await indexing;
-    for (const turn of active.values()) turn.controller.abort(new Error('SHUTDOWN'));
+    const turnsClosed = pacing.close();
     await autonomy.close();
     await manager.disposeAll();
-    await Promise.allSettled([...pending.values()]);
+    await turnsClosed;
     await runtime.close();
     await Promise.allSettled([...dialogue.pending.values()]); dialogueStore.close(); await embedder?.close();
     autonomyStore.close();

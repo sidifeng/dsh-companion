@@ -1,4 +1,5 @@
 import { conversation } from './identity.js';
+import { setTimeout as delay } from 'node:timers/promises';
 
 export function requestedParts(text) {
   const match = /(?:分(?:成|为)?|用)\s*([一二两三四1-4])\s*(?:条|句|段)/u.exec(text);
@@ -30,7 +31,7 @@ export function planMessages(text, maximum = 3, maxChars = 1800, desiredParts) {
 }
 
 export class ReplyQueue {
-  constructor(store, { maximum = 3, intervalMs = 1200, now = Date.now, sleep = ms => new Promise(r => setTimeout(r, ms)) } = {}) {
+  constructor(store, { maximum = 3, intervalMs = 1200, now = Date.now, sleep = (ms, signal) => delay(ms, undefined, { signal }) } = {}) {
     this.store = store; this.maximum = maximum; this.intervalMs = intervalMs;
     this.now = now; this.sleep = sleep; this.tails = new Map(); this.lastSent = new Map(); this.closed = false;
   }
@@ -41,7 +42,9 @@ export class ReplyQueue {
       for (const message of messages) {
         if (this.closed || e.signal?.aborted) break;
         const gap = this.intervalMs - (this.now() - (this.lastSent.get(key) ?? -Infinity));
-        if (gap > 0) await this.sleep(gap);
+        if (gap > 0) {
+          try { await this.sleep(gap, e.signal); } catch (error) { if (e.signal?.aborted) break; throw error; }
+        }
         if (this.closed || e.signal?.aborted) break;
         const sequence = this.store.reserve(e, Math.min(4, this.maximum), this.now());
         if (sequence === null) { outcomes.push({ status: 'blocked', reason: 'budget-or-expired' }); break; }

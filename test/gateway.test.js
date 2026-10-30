@@ -113,6 +113,28 @@ test('真实腾讯 SessionManager/入站处理 + 模拟 QQ 与模型，群内不
   const beforeNonMention = bot.sent.length;
   await bot.receive(message('not-mentioned-command', '<@SOMEONE_ELSE> /关系', { ...group, rawEventType: 'GROUP_MESSAGE_CREATE' }));
   assert.equal(bot.sent.length, beforeNonMention, '正文标记不能绕过平台 @ 检查');
+
+  auxiliary = undefined;
+  const beforeBurst = prompts.length, beforeBurstSent = bot.sent.length;
+  await Promise.all([bot.receive(message('burst1', '今晚想吃面')), bot.receive(message('burst2', '不要太辣')), bot.receive(message('burst3', '请分两条短句回复'))]);
+  assert.equal(prompts.length, beforeBurst + 1);
+  assert.match(JSON.stringify(prompts.at(-1).message), /今晚想吃面.*不要太辣.*分两条/su);
+  assert.match(prompts.at(-1).prompt.variables.companion_pacing, /"combinedMessages":3/u);
+  assert.deepEqual(bot.sent.slice(beforeBurstSent).map(r => [r.target.msgId, r.extra.msg_seq]), [['burst3', 1], ['burst3', 2]]);
+  await bot.receive(message('burst1', '重放原片段')); assert.equal(prompts.length, beforeBurst + 1);
+
+  const correctingRecord = [...gateway.manager.sessions.values()].find(r => r.scope === 'c2c');
+  const staleSession = correctingRecord.agent.session;
+  let correctionStarted; const correctionEntered = new Promise(r => { correctionStarted = r; });
+  correctingRecord.agent.followup = function () { this.pending = new Promise(() => {}); correctionStarted(); };
+  const oldTask = bot.receive(message('stale', '周六下午聊'));
+  await correctionEntered;
+  const beforeCorrection = bot.sent.length;
+  await Promise.all([oldTask, bot.receive(message('corrected', '说错了，是周日下午'))]);
+  assert.deepEqual(bot.sent.slice(beforeCorrection).map(r => r.target.msgId), ['corrected', 'corrected']);
+  assert.match(JSON.stringify(prompts.at(-1).message), /周六下午聊.*说错了，是周日下午/su);
+  for (const fn of callbacks.get('session/event') ?? []) fn(staleSession, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '旧回答不应发送' }] } } });
+  await Promise.resolve(); assert.equal(bot.sent.length, beforeCorrection + 2);
 });
 
 test('图片工具不能读其他人附件或任意本地/远程文件', async t => {
