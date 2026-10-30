@@ -54,7 +54,7 @@ test('向量与旧事实随 schema 2 升级保留；升级前有一致性备份'
   const dir = mkdtempSync(join(tmpdir(), 'companion-v3-')); const file = join(dir, 'memory.sqlite');
   t.after(() => { assert.ok(dir.startsWith(join(tmpdir(), 'companion-v3-'))); rmSync(dir, { recursive: true, force: true }); });
   let s = new MemoryStore(file); s.remember(event(), '原有橘猫记忆');
-  s.db.exec('DROP TABLE episodes; DROP TABLE semantic_vectors; ALTER TABLE profiles DROP COLUMN followups; PRAGMA user_version=2;'); s.close();
+  s.db.exec('DROP TABLE episodes; DROP TABLE semantic_vectors; DROP TABLE biology; DROP TABLE biology_events; ALTER TABLE profiles DROP COLUMN followups; PRAGMA user_version=2;'); s.close();
   s = new MemoryStore(file); assert.equal(s.memoryRows(event())[0].text, '原有橘猫记忆'); s.close();
   const backup = new DatabaseSync(join(dir, readdirSync(dir).find(f => f.includes('before-v3-'))), { readOnly: true });
   assert.equal(backup.prepare('PRAGMA user_version').get().user_version, 2); backup.close();

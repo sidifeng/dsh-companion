@@ -12,16 +12,16 @@ const fact = (value = '喜欢茶') => ({ slot: 'preference:饮料', value, evide
 const analysis = (value, tone = 'positive') => ({ facts: [fact(value)], summary: '聊饮料', tone });
 const store = t => { const s = new MemoryStore(':memory:'); t.after(() => s.close()); return s; };
 
-test('自动记忆按事实槽纠正、拒绝重放，熟悉度不会被连续消息刷高', t => {
+test('自动记忆按事实槽纠正、拒绝重放，旧 tone 不再直接改变关系情绪', t => {
   const s = store(t); const e = event();
   assert.equal(s.applyAnalysis(e, analysis('喜欢茶'), 0), true);
   assert.equal(s.applyAnalysis(e, analysis('喜欢咖啡'), 0), false);
   s.applyAnalysis(event('two', { receivedAt: e.receivedAt + 1000 }), analysis('喜欢咖啡'), 0);
   assert.equal(s.recall(e).length, 1); assert.equal(s.recall(e)[0].text, '喜欢咖啡');
-  assert.equal(s.profile(e).interactions, 2); assert.equal(s.profile(e).familiarity, 1);
+  assert.equal(s.profile(e).interactions, 2); assert.equal(s.profile(e).familiarity, 0);
   s.applyAnalysis(event('three', { receivedAt: e.receivedAt + 14400000 }), { facts: [], summary: '', tone: 'neutral' }, 0);
-  assert.ok(s.profile(e).mood > 0 && s.profile(e).mood < 0.09);
-  assert.equal(s.profile(e).familiarity, 2);
+  assert.equal(s.profile(e).mood, 0);
+  assert.equal(s.profile(e).familiarity, 0);
   assert.deepEqual(s.recall(event('b', { senderId: 'B' })), []);
 });
 
@@ -50,9 +50,9 @@ test('schema 1 升级保留旧记忆，并产生可单独打开的升级前备�
   const directory = mkdtempSync(join(tmpdir(), 'companion-migration-')); const file = join(directory, 'memory.sqlite');
   t.after(() => { assert.ok(directory.startsWith(join(tmpdir(), 'companion-migration-'))); rmSync(directory, { recursive: true, force: true }); });
   const first = new MemoryStore(file); first.remember(event(), '旧记忆');
-  first.db.exec('DROP TABLE facts; DROP TABLE fact_history; DROP TABLE profiles; DROP TABLE analyzed; DROP TABLE episodes; DROP TABLE semantic_vectors; PRAGMA user_version=1;'); first.close();
+  first.db.exec('DROP TABLE facts; DROP TABLE fact_history; DROP TABLE profiles; DROP TABLE analyzed; DROP TABLE episodes; DROP TABLE semantic_vectors; DROP TABLE biology; DROP TABLE biology_events; PRAGMA user_version=1;'); first.close();
   const upgraded = new MemoryStore(file); assert.equal(upgraded.recall(event())[0].text, '旧记忆');
-  assert.equal(upgraded.db.prepare('PRAGMA user_version').get().user_version, 3); upgraded.close();
+  assert.equal(upgraded.db.prepare('PRAGMA user_version').get().user_version, 4); upgraded.close();
   const backup = new DatabaseSync(join(directory, readdirSync(directory).find(x => x.includes('.before-v2-'))), { readOnly: true });
   assert.equal(backup.prepare('PRAGMA user_version').get().user_version, 1);
   assert.equal(backup.prepare('SELECT text FROM memories').get().text, '旧记忆'); backup.close();

@@ -14,6 +14,7 @@ import { AutonomyStore } from './autonomy-store.js';
 import { AutonomyEngine, createAutonomyTasks } from './autonomy.js';
 import { DialogueStore, DialogueContext } from './dialogue.js';
 import { LocalEmbedder, SemanticMemory } from './semantic.js';
+import { appraiseInteraction } from './appraisal.js';
 
 export function createTransport(bot, store) {
   return async (message, target) => {
@@ -58,7 +59,7 @@ export async function startGateway(ctx, config, dependencies = {}) {
   const upstream = dependencies.upstream ?? await loadUpstream();
   const logger = ctx.logger ?? console;
   const dataDir = config.companion.dataDir || join(process.env.DSH_HOME || join(homedir(), '.dsh'), 'companion', opaqueId(config.appId));
-  const runtime = new CompanionRuntime({ database: join(dataDir, 'memory.sqlite'), ...config.companion });
+  const runtime = new CompanionRuntime({ database: join(dataDir, 'memory.sqlite'), ...config.companion, biology: config.biology });
   const allowedFiles = new WeakMap();
   const fileKinds = new WeakMap();
   const active = new Map();
@@ -105,6 +106,7 @@ export async function startGateway(ctx, config, dependencies = {}) {
     }
   }
   const manager = new CompanionSessions(ctx, ctx.agents, { ...config, preset: undefined }, safeLogger);
+  runtime.appraise = e => appraiseInteraction(runtime, e, ctx.get('llm'), manager.getEffectiveModel(e.scope, peerKey(e)));
   const dialogueStore = new DialogueStore(join(dataDir, 'dialogue.sqlite'), config.dialogue);
   const dialogue = new DialogueContext(dialogueStore, () => ctx.get('llm'), () => manager.getEffectiveModel('group', 'dialogue'), Date.now, runtime.store);
   if (config.dialogue.enabled) runtime.dialogue = dialogue;

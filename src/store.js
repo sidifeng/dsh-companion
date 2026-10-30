@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { partition, eventKey } from './identity.js';
+import { initialBiology, advanceBiology, updateBiology } from './biology.js';
 
 export class MemoryStore {
   constructor(file) {
@@ -9,7 +10,7 @@ export class MemoryStore {
     this.db = new DatabaseSync(file);
     this.db.exec('PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;');
     const version = this.db.prepare('PRAGMA user_version').get().user_version;
-    if (version > 3) { this.db.close(); throw new Error('数据库版本比插件新；请恢复匹配版本，未修改数据。'); }
+    if (version > 4) { this.db.close(); throw new Error('数据库版本比插件新；请恢复匹配版本，未修改数据。'); }
     if (version === 0) this.db.exec(`
       BEGIN IMMEDIATE;
       CREATE TABLE memories (
@@ -51,6 +52,15 @@ export class MemoryStore {
         CREATE TABLE semantic_vectors (owner TEXT NOT NULL, memory_id TEXT NOT NULL, source_hash TEXT NOT NULL,
           model TEXT NOT NULL, vectors TEXT NOT NULL, PRIMARY KEY(owner,memory_id,model));
         PRAGMA user_version=3; COMMIT;`);
+    }
+    if (version < 4) {
+      if (version > 0 && file !== ':memory:') this.db.exec(`VACUUM INTO '${String(file + '.before-v4-' + Date.now()).replaceAll("'", "''")}'`);
+      this.db.exec(`BEGIN IMMEDIATE;
+        CREATE TABLE biology (owner TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 1, state TEXT NOT NULL);
+        CREATE TABLE biology_events (event_key TEXT PRIMARY KEY, owner TEXT NOT NULL, at INTEGER NOT NULL,
+          kind TEXT NOT NULL, evidence TEXT NOT NULL, hash TEXT NOT NULL, applied INTEGER NOT NULL);
+        CREATE INDEX biology_events_owner ON biology_events(owner,at);
+        PRAGMA user_version=4; COMMIT;`);
     }
   }
   claim(e) {
@@ -94,6 +104,40 @@ export class MemoryStore {
     this.db.prepare('INSERT OR IGNORE INTO profiles(owner) VALUES(?)').run(partition(e));
     return this.db.prepare('SELECT * FROM profiles WHERE owner=?').get(partition(e));
   }
+  biologyEnabled(e) { return this.db.prepare('SELECT enabled FROM biology WHERE owner=?').get(partition(e))?.enabled !== 0; }
+  biologySnapshot(e, now = Date.now()) {
+    const stored = this.db.prepare('SELECT state FROM biology WHERE owner=?').get(partition(e));
+    return advanceBiology(stored ? JSON.parse(stored.state) : initialBiology(this.profile(e), now), now);
+  }
+  biologyHistory(e) { return this.db.prepare('SELECT kind,at,applied FROM biology_events WHERE owner=? ORDER BY at DESC LIMIT 5').all(partition(e)); }
+  setBiology(e, enabled) {
+    const state = this.biologySnapshot(e, e.receivedAt);
+    this.db.prepare('INSERT INTO biology VALUES(?,?,?) ON CONFLICT(owner) DO UPDATE SET enabled=excluded.enabled').run(partition(e), Number(enabled), JSON.stringify(state));
+    this.resetContext(e);
+  }
+  resetBiology(e) {
+    const enabled = this.biologyEnabled(e);
+    this.db.prepare('DELETE FROM biology_events WHERE owner=?').run(partition(e));
+    this.db.prepare('INSERT INTO biology VALUES(?,?,?) ON CONFLICT(owner) DO UPDATE SET state=excluded.state').run(partition(e), Number(enabled), JSON.stringify(initialBiology({}, e.receivedAt)));
+    this.profile(e); this.db.prepare('UPDATE profiles SET familiarity=0,mood=0,epoch=epoch+1 WHERE owner=?').run(partition(e));
+  }
+  applyAppraisal(e, appraisal, epoch, options = {}) {
+    const p = this.profile(e); const owner = partition(e);
+    if (!p.auto_memory || p.epoch !== epoch || !this.biologyEnabled(e)) return false;
+    this.db.exec('BEGIN IMMEDIATE;');
+    try {
+      if (this.db.prepare('SELECT 1 FROM biology_events WHERE event_key=?').get(eventKey(e))) { this.db.exec('ROLLBACK;'); return false; }
+      const row = this.db.prepare('SELECT state FROM biology WHERE owner=?').get(owner);
+      const previous = row ? JSON.parse(row.state) : initialBiology(p, e.receivedAt);
+      const repeated = !!this.db.prepare('SELECT 1 FROM biology_events WHERE owner=? AND hash=? AND at>?').get(owner, appraisal.hash, e.receivedAt - 86400000);
+      const result = updateBiology(previous, appraisal, e.receivedAt, { ...options, repeated });
+      this.db.prepare('INSERT INTO biology VALUES(?,1,?) ON CONFLICT(owner) DO UPDATE SET state=excluded.state').run(owner, JSON.stringify(result.state));
+      this.db.prepare('INSERT INTO biology_events VALUES(?,?,?,?,?,?,?)').run(eventKey(e), owner, e.receivedAt, appraisal.kind, appraisal.evidence, appraisal.hash, Number(result.applied));
+      this.db.prepare('UPDATE profiles SET familiarity=?,mood=? WHERE owner=?').run(result.state.familiarity * 100, result.state.valence, owner);
+      this.db.prepare('DELETE FROM biology_events WHERE owner=? AND (at<? OR event_key NOT IN (SELECT event_key FROM biology_events WHERE owner=? ORDER BY at DESC LIMIT 500))').run(owner, e.receivedAt - 90 * 86400000, owner);
+      this.db.exec('COMMIT;'); return true;
+    } catch (error) { this.db.exec('ROLLBACK;'); throw error; }
+  }
   setAutoMemory(e, enabled) { this.profile(e); this.db.prepare('UPDATE profiles SET auto_memory=?,epoch=epoch+1 WHERE owner=?').run(Number(enabled), partition(e)); }
   resetContext(e) { this.profile(e); this.db.prepare('UPDATE profiles SET epoch=epoch+1 WHERE owner=?').run(partition(e)); }
   forget(e) {
@@ -101,7 +145,8 @@ export class MemoryStore {
     this.db.exec('BEGIN IMMEDIATE;');
     try {
       let count = 0;
-      for (const table of ['memories', 'facts', 'fact_history', 'episodes', 'semantic_vectors']) count += this.db.prepare(`DELETE FROM ${table} WHERE owner=?`).run(owner).changes;
+      for (const table of ['memories', 'facts', 'fact_history', 'episodes', 'semantic_vectors', 'biology_events']) count += this.db.prepare(`DELETE FROM ${table} WHERE owner=?`).run(owner).changes;
+      this.db.prepare('UPDATE biology SET state=? WHERE owner=?').run(JSON.stringify(initialBiology({}, e.receivedAt)), owner);
       this.db.prepare("UPDATE profiles SET summary='',familiarity=0,mood=0,interactions=0,last_at=0,last_growth=0,epoch=epoch+1 WHERE owner=?").run(owner);
       this.db.exec('COMMIT;'); return count;
     } catch (error) { this.db.exec('ROLLBACK;'); throw error; }
@@ -139,14 +184,9 @@ export class MemoryStore {
       for (const plan of analysis.followups ?? []) {
         this.saveFollowup(e, plan, epoch);
       }
-      const elapsed = Math.max(0, e.receivedAt - current.last_at);
-      const neutralized = current.mood * Math.pow(0.5, elapsed / 14_400_000);
-      const delta = analysis.tone === 'positive' ? 0.08 : analysis.tone === 'negative' ? -0.08 : 0;
-      const mood = Math.max(-0.6, Math.min(0.6, neutralized + delta));
-      const grow = e.receivedAt - current.last_growth >= 300000 || current.interactions === 0;
       const summary = analysis.summary || current.summary;
-      this.db.prepare('UPDATE profiles SET summary=?,familiarity=?,mood=?,interactions=interactions+1,last_at=?,last_growth=? WHERE owner=?')
-        .run(summary, Math.min(100, current.familiarity + Number(grow)), mood, Math.max(current.last_at, e.receivedAt), grow ? e.receivedAt : current.last_growth, owner);
+      this.db.prepare('UPDATE profiles SET summary=?,interactions=interactions+1,last_at=? WHERE owner=?')
+        .run(summary, Math.max(current.last_at, e.receivedAt), owner);
       this.db.exec('COMMIT;'); return true;
     } catch (error) { this.db.exec('ROLLBACK;'); throw error; }
   }
@@ -160,7 +200,7 @@ export class MemoryStore {
   groupPlans(appId, targetId) {
     return this.db.prepare("SELECT 'E'||id AS id,owner,text FROM episodes WHERE json_extract(owner,'$[0]')=? AND json_extract(owner,'$[1]')='group' AND json_extract(owner,'$[2]')=? AND audience='group' AND status='open' ORDER BY id DESC LIMIT 20").all(appId, targetId);
   }
-  plans(e) { return this.db.prepare("SELECT 'E'||id AS id,text,evidence,due_at,expires_at,status,asked_at,audience FROM episodes WHERE owner=? ORDER BY updated_at DESC LIMIT 20").all(partition(e)); }
+  plans(e) { return this.db.prepare("SELECT 'E'||id AS id,text,evidence,due_at,expires_at,status,asked_at,audience,created_at FROM episodes WHERE owner=? ORDER BY updated_at DESC LIMIT 20").all(partition(e)); }
   closeFollowup(e, id, status = 'closed') {
     if (!/^E\d+$/u.test(id) || !['closed', 'resolved'].includes(status)) return false;
     this.db.prepare('DELETE FROM semantic_vectors WHERE owner=? AND memory_id=?').run(partition(e), id);

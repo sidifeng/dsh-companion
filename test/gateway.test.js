@@ -24,10 +24,11 @@ class FakeQQ {
 test('真实腾讯 SessionManager/入站处理 + 模拟 QQ 与模型，群内不同人不合并', async t => {
   const dir = mkdtempSync(join(tmpdir(), 'companion-gateway-'));
   const bot = new FakeQQ(); const callbacks = new Map(); const agents = new Map(); const prompts = [];
+  let auxiliary;
   const tools = { restrict() {}, guard() {}, register() {} };
   const ctx = {
     logger: { info() {}, warn() {}, error() {} },
-    get: name => name === 'tools' ? tools : undefined,
+    get: name => name === 'tools' ? tools : name === 'llm' ? auxiliary : undefined,
     on(name, fn) { callbacks.set(name, [...(callbacks.get(name) ?? []), fn]); return () => {}; },
     effect(fn) { fn(); },
     agents: {
@@ -91,9 +92,18 @@ test('真实腾讯 SessionManager/入站处理 + 模拟 QQ 与模型，群内不
   await bot.receive(message('new-after-cancel', '继续聊'));
   assert.notEqual([...gateway.manager.sessions.values()].find(r => r.scope === 'c2c').sessionId, oldSession.header.id);
   config.autonomy.enabled = true; config.autonomy.groupEnabled = true;
+  // 这里只验证发送链路；夜间禁发由 autonomy.test 单独验证，不能依赖运行测试时的时钟。
+  gateway.autonomy.now = () => Date.parse('2026-10-30T12:00:00+08:00');
   await gateway.autonomy.run({ browse: false, manual: true });
   assert.deepEqual(bot.sent.at(-1).target, { scope: 'group', targetId: 'GROUP' });
   assert.equal(bot.sent.at(-1).msgType, 0);
+  auxiliary = { async *stream() {
+    yield { type: 'text-delta', index: 0, text: JSON.stringify({ event: { kind: 'warmth', target: 'bot', subject: 'speaker', evidence: '和你聊天很开心', intensity: 0.6, confidence: 0.95 } }) };
+    yield { type: 'finish', reason: { kind: 'stop' } };
+  } };
+  await bot.receive(message('bio', '和你聊天很开心'));
+  assert.match(prompts.at(-1).prompt.variables.companion_biology, /初识/u);
+  assert.equal(gateway.runtime.store.db.prepare('SELECT count(*) n FROM biology_events').get().n, 1);
 });
 
 test('图片工具不能读其他人附件或任意本地/远程文件', async t => {

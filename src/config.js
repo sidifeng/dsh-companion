@@ -37,6 +37,10 @@ export const Config = Schema.intersect([
       retentionHours: Schema.number().min(1).max(72).default(24),
       maxMessages: Schema.number().min(20).max(200).step(1).default(120),
     }).default({}),
+    biology: Schema.object({
+      enabled: Schema.boolean().default(true).description('按人与场景积累缓慢关系变化和有惯性的情绪；不因缺席扣分'),
+      adaptive: Schema.boolean().default(false).description('实验性：多日明确表达反馈足够后微调表达参数，默认关闭'),
+    }).default({}),
     autonomy: Schema.object({
       enabled: Schema.boolean().default(false),
       groupEnabled: Schema.boolean().default(false),
