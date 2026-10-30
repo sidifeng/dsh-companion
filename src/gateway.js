@@ -155,6 +155,7 @@ export async function startGateway(ctx, config, dependencies = {}) {
     },
   });
   runtime.autonomyContext = e => ({ experiences: autonomyStore.experiences(3),
+    interests: autonomyStore.interests.context(e.text,3),
     recentProactive: autonomyStore.history(`chat:${e.scope}`, e.targetId, 3).filter(r => r.state === 'sent') });
   ctx.on('system-prompt/assemble', async (_assembly, context, next) => runtime.assemble(await next(), context.agent), { global: true });
   ctx.on('session/event', (session, event) => {

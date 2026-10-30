@@ -3,6 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { partition, eventKey } from './identity.js';
 import { initialBiology, advanceBiology, updateBiology } from './biology.js';
+import { ContinuityMemory } from './continuity.js';
 
 export class MemoryStore {
   constructor(file) {
@@ -10,7 +11,7 @@ export class MemoryStore {
     this.db = new DatabaseSync(file);
     this.db.exec('PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;');
     const version = this.db.prepare('PRAGMA user_version').get().user_version;
-    if (version > 4) { this.db.close(); throw new Error('数据库版本比插件新；请恢复匹配版本，未修改数据。'); }
+    if (version > 5) { this.db.close(); throw new Error('数据库版本比插件新；请恢复匹配版本，未修改数据。'); }
     if (version === 0) this.db.exec(`
       BEGIN IMMEDIATE;
       CREATE TABLE memories (
@@ -62,6 +63,7 @@ export class MemoryStore {
         CREATE INDEX biology_events_owner ON biology_events(owner,at);
         PRAGMA user_version=4; COMMIT;`);
     }
+    this.life = new ContinuityMemory(this, file, version > 0);
   }
   claim(e) {
     return this.db.prepare('INSERT OR IGNORE INTO inbound VALUES (?, ?, ?)')
@@ -81,7 +83,8 @@ export class MemoryStore {
       .all(partition(e));
     rows.push(...this.db.prepare("SELECT 'F'||id AS id,value AS text,updated_at AS created_at,slot,confidence FROM facts WHERE owner=? ORDER BY updated_at DESC LIMIT 200").all(partition(e)));
     rows.push(...this.db.prepare("SELECT 'E'||id AS id,text,created_at,status FROM episodes WHERE owner=? ORDER BY updated_at DESC LIMIT 200").all(partition(e)));
-    // P0 有界中文片段匹配，后续用中文全文/向量检索替换。
+    rows.push(...this.life.rows(e, 200));
+    // 向量不可用时使用有界中文片段匹配。
     const compact = query.replace(/\s/gu, '');
     const terms = [...new Set(Array.from(compact).slice(0, 100).flatMap((_, i) => compact.slice(i, i + 2).length === 2 ? [compact.slice(i, i + 2)] : []))];
     return rows.map(row => ({ ...row, score: terms.reduce((n, term) => n + Number(row.text.includes(term)), 0) }))
@@ -91,9 +94,9 @@ export class MemoryStore {
     const owner = partition(e);
     return [...this.db.prepare("SELECT 'M'||id AS id,text,created_at FROM memories WHERE owner=? ORDER BY created_at,id").all(owner),
       ...this.db.prepare("SELECT 'F'||id AS id,value AS text,updated_at AS created_at,slot FROM facts WHERE owner=? ORDER BY updated_at,id").all(owner),
-      ...this.db.prepare("SELECT 'E'||id AS id,text,created_at,status FROM episodes WHERE owner=? ORDER BY created_at,id").all(owner)];
+      ...this.db.prepare("SELECT 'E'||id AS id,text,created_at,status FROM episodes WHERE owner=? ORDER BY created_at,id").all(owner), ...this.life.rows(e)];
   }
-  memoryOwners() { return this.db.prepare('SELECT owner FROM memories UNION SELECT owner FROM facts UNION SELECT owner FROM episodes').all().map(r => JSON.parse(r.owner)); }
+  memoryOwners() { return this.db.prepare('SELECT owner FROM memories UNION SELECT owner FROM facts UNION SELECT owner FROM episodes UNION SELECT owner FROM stories').all().map(r => JSON.parse(r.owner)); }
   vectorRows(e, model) { return this.db.prepare('SELECT * FROM semantic_vectors WHERE owner=? AND model=?').all(partition(e), model); }
   saveVector(e, row, hash, model, vectors, epoch) {
     if (this.profile(e).epoch !== epoch || !this.memoryRows(e).some(r => r.id === row.id && r.text === row.text && r.status === row.status)) return false;
@@ -145,13 +148,18 @@ export class MemoryStore {
     this.db.exec('BEGIN IMMEDIATE;');
     try {
       let count = 0;
-      for (const table of ['memories', 'facts', 'fact_history', 'episodes', 'semantic_vectors', 'biology_events']) count += this.db.prepare(`DELETE FROM ${table} WHERE owner=?`).run(owner).changes;
+      for (const table of ['memories', 'facts', 'fact_history', 'episodes', 'semantic_vectors', 'biology_events', 'stories', 'story_steps', 'fact_observations']) count += this.db.prepare(`DELETE FROM ${table} WHERE owner=?`).run(owner).changes;
       this.db.prepare('UPDATE biology SET state=? WHERE owner=?').run(JSON.stringify(initialBiology({}, e.receivedAt)), owner);
       this.db.prepare("UPDATE profiles SET summary='',familiarity=0,mood=0,interactions=0,last_at=0,last_growth=0,epoch=epoch+1 WHERE owner=?").run(owner);
       this.db.exec('COMMIT;'); return count;
     } catch (error) { this.db.exec('ROLLBACK;'); throw error; }
   }
   editMemory(e, id, replacement) {
+    if (/^S\d+$/u.test(id)) {
+      if (replacement !== undefined && (!replacement.trim() || replacement.length > 2000)) throw new Error('记忆内容应为 1～2000 字。');
+      if (!this.life.editStory(e, id, replacement)) return false;
+      this.profile(e); this.db.prepare("UPDATE profiles SET summary='',epoch=epoch+1 WHERE owner=?").run(partition(e)); return true;
+    }
     const match = /^([MFE])(\d+)$/u.exec(id); if (!match) return false;
     const table = match[1] === 'F' ? 'facts' : match[1] === 'E' ? 'episodes' : 'memories';
     const owner = partition(e); const row = this.db.prepare(`SELECT * FROM ${table} WHERE owner=? AND id=?`).get(owner, Number(match[2]));
@@ -162,7 +170,15 @@ export class MemoryStore {
     else if (table === 'episodes') this.db.prepare("UPDATE episodes SET text=?,evidence=?,status='closed',updated_at=? WHERE owner=? AND id=?").run(replacement, replacement, e.receivedAt, owner, row.id);
     else this.db.prepare('UPDATE memories SET text=? WHERE owner=? AND id=?').run(replacement, owner, row.id);
     this.db.prepare('DELETE FROM semantic_vectors WHERE owner=? AND memory_id=?').run(owner, id);
-    if (table === 'facts') this.db.prepare('DELETE FROM fact_history WHERE owner=? AND fact_id=?').run(owner, row.id);
+    if (table === 'facts') {
+      this.db.prepare('DELETE FROM fact_history WHERE owner=? AND fact_id=?').run(owner, row.id);
+      this.db.prepare('DELETE FROM fact_observations WHERE owner=? AND fact_id=?').run(owner, row.id);
+      if (replacement !== undefined) this.life.observeFacts(e, [{slot:row.slot,value:replacement,evidence:replacement}]);
+    }
+    if (table === 'episodes') {
+      const story = this.life.list(e, -1).find(s=>s.plan_id===id);
+      if (story) { if (replacement === undefined) this.life.removeStory(e, story.id, false); else this.life.editStory(e, story.id, replacement); }
+    }
     this.profile(e); this.db.prepare("UPDATE profiles SET summary='',epoch=epoch+1 WHERE owner=?").run(owner);
     return true;
   }
@@ -180,10 +196,16 @@ export class MemoryStore {
           ON CONFLICT(owner,slot) DO UPDATE SET value=excluded.value,evidence=excluded.evidence,confidence=excluded.confidence,source_event=excluded.source_event,updated_at=excluded.updated_at`)
           .run(owner, fact.slot, fact.value, fact.evidence, fact.confidence, eventKey(e), e.receivedAt, e.receivedAt);
       }
-      for (const resolution of analysis.resolutions ?? []) this.closeFollowup(e, resolution.id, resolution.status);
+      this.life.observeFacts(e, analysis.facts);
+      for (const resolution of analysis.resolutions ?? []) {
+        this.closeFollowup(e, resolution.id, resolution.status);
+        const story = this.life.list(e, -1).find(s=>s.plan_id===resolution.id);
+        if (story && resolution.status === 'resolved') this.life.apply(e,[{id:story.id,stage:'completed',text:resolution.evidence,evidence:resolution.evidence}]);
+      }
       for (const plan of analysis.followups ?? []) {
         this.saveFollowup(e, plan, epoch);
       }
+      this.life.apply(e, analysis.stories);
       const summary = analysis.summary || current.summary;
       this.db.prepare('UPDATE profiles SET summary=?,interactions=interactions+1,last_at=? WHERE owner=?')
         .run(summary, Math.max(current.last_at, e.receivedAt), owner);
@@ -194,8 +216,10 @@ export class MemoryStore {
   saveFollowup(e, plan, epoch) {
     const p = this.profile(e); const owner = partition(e);
     if (!p.auto_memory || !p.followups || p.epoch !== epoch || this.db.prepare("SELECT 1 FROM episodes WHERE owner=? AND text=? AND status='open'").get(owner, plan.text)) return false;
-    return this.db.prepare(`INSERT OR IGNORE INTO episodes(owner,source_event,text,evidence,due_at,expires_at,audience,created_at,updated_at)
-      VALUES(?,?,?,?,?,?,?,?,?)`).run(owner, eventKey(e), plan.text, plan.evidence, plan.dueAt, plan.expiresAt, plan.audience, e.receivedAt, e.receivedAt).changes > 0;
+    const added = this.db.prepare(`INSERT OR IGNORE INTO episodes(owner,source_event,text,evidence,due_at,expires_at,audience,created_at,updated_at)
+      VALUES(?,?,?,?,?,?,?,?,?)`).run(owner, eventKey(e), plan.text, plan.evidence, plan.dueAt, plan.expiresAt, plan.audience, e.receivedAt, e.receivedAt);
+    if (added.changes) this.life.seedPlan(e, `E${added.lastInsertRowid}`, plan);
+    return added.changes > 0;
   }
   groupPlans(appId, targetId) {
     return this.db.prepare("SELECT 'E'||id AS id,owner,text FROM episodes WHERE json_extract(owner,'$[0]')=? AND json_extract(owner,'$[1]')='group' AND json_extract(owner,'$[2]')=? AND audience='group' AND status='open' ORDER BY id DESC LIMIT 20").all(appId, targetId);
