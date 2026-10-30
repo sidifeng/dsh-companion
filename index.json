@@ -1,0 +1,44 @@
+{
+  "format": 1,
+  "title": "DSH Companion 插件索引",
+  "metadata": {
+    "categories": {},
+    "labels": {},
+    "sortKeys": {}
+  },
+  "plugins": [
+    {
+      "name": "dsh-companion",
+      "title": "DSH Companion · QQ 伙伴",
+      "description": "QQ 官方机器人：DeepSeek 对话、人物记忆、图片、视频抽帧与本地语音",
+      "homepage": "https://github.com/sidifeng/dsh-companion",
+      "repository": {
+        "url": "https://github.com/sidifeng/dsh-companion"
+      },
+      "metadata": {
+        "keywords": [
+          "dsh-plugin",
+          "deepseek-harness",
+          "qqbot",
+          "memory"
+        ],
+        "labels": [],
+        "sortKeys": {}
+      },
+      "versions": [
+        {
+          "version": "0.2.0-alpha.1",
+          "publishTimestamp": 1793363487,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/sidifeng/dsh-companion",
+            "commit": "1d3ad3606393f2a73d1c98f83c493b560080d866"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.2 <0.2.2"
+          }
+        }
+      ]
+    }
+  ]
+}
