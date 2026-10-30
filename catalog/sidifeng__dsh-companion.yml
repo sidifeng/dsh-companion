@@ -1,0 +1,6 @@
+url: https://github.com/sidifeng/dsh-companion
+name: sidifeng/dsh-companion
+category: remote
+description:
+  en: Official QQ bot integration with per-person memory, image understanding, sampled video frames and local text-to-speech.
+  zh: 使用 QQ 官方机器人接口，提供按人隔离的记忆、图片理解、视频画面抽样与本地语音合成。

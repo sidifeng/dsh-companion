@@ -1,6 +1,6 @@
 {
   "name": "dsh-companion",
-  "version": "0.2.0-alpha.1",
+  "version": "0.2.0-alpha.2",
   "description": "QQ 官方机器人：DeepSeek 对话、人物记忆、图片、视频抽帧与本地语音",
   "type": "module",
   "main": "./src/index.js",
@@ -35,8 +35,7 @@
     "test": "node --test",
     "check": "node scripts/check.mjs",
     "doctor": "node scripts/doctor.mjs",
-    "demo": "node scripts/demo.mjs",
-    "prepack": "npm run check && npm test"
+    "demo": "node scripts/demo.mjs"
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "3.18.1",

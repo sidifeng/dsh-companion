@@ -1,4 +1,7 @@
 import { fetchMedia } from './media.js';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 export function bilibiliId(value) {
   const text = String(value).trim();
@@ -41,4 +44,19 @@ export async function readBilibili(input, signal) {
 export async function browseBilibili(signal) {
   const data = await api('/x/web-interface/popular?ps=5&pn=1', signal);
   return (data.list ?? []).slice(0, 5).map(v => ({ bvid: v.bvid, title: v.title, author: v.owner?.name, durationSeconds: v.duration, url: `https://www.bilibili.com/video/${v.bvid}/` }));
+}
+
+export async function downloadPublicBilibili(input, { directory, maxSeconds, maxBytes }, signal) {
+  const bvid = bilibiliId(input);
+  const info = await api(`/x/web-interface/view?bvid=${encodeURIComponent(bvid)}`, signal);
+  if (info.rights?.pay || !(info.duration > 0 && info.duration <= maxSeconds)) throw new Error(`画面理解仅支持无需付费、时长不超过 ${maxSeconds} 秒的公开短视频。`);
+  const player = await api(`/x/player/playurl?bvid=${bvid}&cid=${info.cid}&qn=16&fnval=1&platform=html5`, signal);
+  const segments = player?.durl;
+  if (player?.format !== 'mp4' || segments?.length !== 1) throw new Error('该视频没有可用的公开 MP4；可以尝试读取简介或字幕。');
+  const source = segments[0]; const url = new URL(source.url);
+  if (source.size > maxBytes || !/(?:^|\.)bilivideo\.(?:com|cn|net)$/u.test(url.hostname)) throw new Error('视频超过下载限制，或来自未支持的 CDN。');
+  const data = await fetchMedia(url.href, { maxBytes, signal, headers });
+  signal?.throwIfAborted(); await mkdir(directory, { recursive: true });
+  const localPath = join(directory, `${randomUUID()}.video`); await writeFile(localPath, data);
+  return { localPath, title: info.title, url: `https://www.bilibili.com/video/${bvid}/` };
 }

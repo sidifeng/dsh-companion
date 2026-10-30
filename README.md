@@ -2,7 +2,7 @@
 
 专门服务于 QQ 官方机器人的 DeepSeek Harness 插件。默认是自然、温和的朋友，不固定名字。使用官方 AppID/AppSecret，不登录个人 QQ，不依赖 OneBot。
 
-当前为 **0.2.0-alpha.1 预览版**，面向 DSH **0.2.1-rc.2**、Node.js **>=22.13**。安装时默认关闭，配置并停用旧 QQ 接入后启用。不是腾讯或 DeepSeek 官方产品。
+当前为 **0.2.0-alpha.2 预览版**，面向 DSH **0.2.1-rc.2**、Node.js **>=22.13**。安装时默认关闭，配置并停用旧 QQ 接入后启用。不是腾讯或 DeepSeek 官方产品。
 
 ## 能力与验证范围
 
@@ -11,24 +11,40 @@
 | 私聊、群聊 | 官方 WebSocket；仅 OpenID 白名单，群聊默认需要 @；真实收发已验证 |
 | 连续短消息 | 默认最多 3 个气泡、间隔 1.2 秒；群聊两个独立气泡已验证 |
 | 图片 | 本轮附件交给已配置的视觉模型；QQ 私聊识图已验证 |
-| 长期记忆 | SQLite 持久化，明确保存、自动整理、更正、删除和关闭自动记忆；新增自动整理待 QQ 验收 |
+| 长期记忆 | SQLite 持久化，明确保存、自动整理、更正、删除和关闭自动记忆；QQ 自动整理已验证 |
 | 人物关系 | 按人和场景积累熟悉度、缓慢衰减的情绪；不因缺席惩罚用户 |
-| 视频 | FFmpeg 抽取最多 3 个时间点，再调用视觉模型；默认仅前 180 秒。抽帧已本机验证，QQ 端待验收；不分析音轨，不代表连续观看 |
-| 语音 | 本机 WAV 转 QQ SILK 后发送；Piper→SILK 已验证，QQ 播放待验收 |
-| B站 | 热门列表、BV 标题/简介及可获取的公开字幕；热门与资料读取已验证。无画面证据时不会声称看过视频 |
+| 视频 | FFmpeg 抽取最多 3 个时间点，再调用视觉模型；默认仅前 180 秒。QQ 视频描述已验证；不分析音轨，不代表连续观看 |
+| 语音 | 本机 WAV 转 QQ SILK 后发送；QQ 私聊接收和播放已验证 |
+| B站 | 热门、BV 标题/简介、公开字幕；新增公开短视频画面抽样，限 180 秒/25 MB、无需登录付费的单段 MP4。下载和抽帧本机已验证，新增 B站画面工具 QQ 端待验收 |
 | 唱歌 | 未接入歌声合成引擎；普通 TTS 不能替代唱歌 |
 
 持续自主刷视频、完整音视频理解、唱歌、主动消息授权与调度尚未完成。当前是收到消息后回应的预览版本。
 
 ## 安装与更新
 
-源码：[sidifeng/dsh-companion](https://github.com/sidifeng/dsh-companion)。在 DSH 插件市场添加索引来源：
+源码：[sidifeng/dsh-companion](https://github.com/sidifeng/dsh-companion)。
+
+### 已安装 dshmarket 的用户
+
+可先在宿主「插件 → 添加插件」中填入 `github:sidifeng/dsh-companion`，或使用官方命令：
+
+```powershell
+npx @deepseek-ai/dsh plugin --profile web add github:sidifeng/dsh-companion
+```
+
+保留 GitHub 来源后，进入「插件市场 → 已安装」检查更新，点击本插件的更新按钮。dshmarket 会比较 GitHub 上的版本/提交。`link:` 本地开发目录不支持在线更新，必须先切换到 GitHub 来源。安装代码是原生 ESM，无须运行安装构建脚本。
+
+发现页搜索使用社区目录，需先通过收录审核；本仓库刚创建，按目录要求满一天后才能提交。准备好的条目在 `catalog/sidifeng__dsh-companion.yml`。没有被收录之前，不能承诺默认发现页已能搜索到。
+
+### 使用 DSH 官方 format 1 索引的用户
+
+在支持自定义索引来源的官方插件发现页添加：
 
 ```text
 https://raw.githubusercontent.com/sidifeng/dsh-companion/market-index/index.json
 ```
 
-刷新来源，搜索 `dsh-companion`，选择版本安装。**添加来源后可搜索；上传 GitHub 不等于自动进入所有人的默认市场。** 当前未申请默认社区目录收录。
+刷新来源，搜索 `dsh-companion`，选择版本安装。**此来源属于官方 format 1 格式，不能直接作为 dshmarket 的社区目录。** 上传 GitHub 不等于自动进入默认市场。
 
 每版固定指向完整 Git 提交 SHA。保留这个索引来源，新版发布后刷新市场并选择新版更新。数据库放在独立数据目录，不随代码更新覆盖。
 
