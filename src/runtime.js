@@ -1,6 +1,6 @@
 import { MemoryStore } from './store.js';
 import { ReplyQueue, planMessages, requestedParts } from './replies.js';
-import { envelope } from './identity.js';
+import { envelope, partition } from './identity.js';
 import { mediaKind } from './media.js';
 import { expressionState } from './biology.js';
 import { ExpressionContext } from './pacing.js';
@@ -45,7 +45,9 @@ export class CompanionRuntime {
       const date = at => new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',dateStyle:'short'}).format(at);
       if (id) { const story = this.store.life.detail(e,id); return story ? `${story.id}：${story.title}（${stages[story.status]}）\n` + story.steps.map(s=>`${date(s.at)}记录 ${stages[s.stage]}：${s.text}`).join('\n') : '找不到属于你在当前场景的这段经历。'; }
       const rows = this.store.life.list(e,8);
-      return rows.length ? rows.map(s=>`${s.id}：${s.title}（${stages[s.status]}）`).join('\n') + '\n用 /经历 S编号 查看进展；/纠正 S编号 内容 或 /忘记 S编号 可修改。' : '还没有保存具体经历。真实聊过的事情有进展时会逐步串起来。';
+      if (rows.length) return rows.map(s=>`${s.id}：${s.title}（${stages[s.status]}）`).join('\n') + '\n用 /经历 S编号 查看进展；/纠正 S编号 内容 或 /忘记 S编号 可修改。';
+      const last=this.store.db.prepare("SELECT status FROM capabilities WHERE scope=? AND capability='memory-analysis'").get(partition(e));
+      return last?.status==='failed'?'最近一次经历整理未完成，还没有写入记录。原有记忆保留；可以稍后再补充这件事的具体进展。':'还没有保存具体经历。真实聊过的事情有进展时会逐步串起来。';
     }
     if (/^\/自动记忆\s+(开|关)$/u.test(text)) { const on = text.endsWith('开'); this.store.setAutoMemory(e, on); return `已${on ? '开启' : '关闭'}当前聊天的自动记忆。`; }
     const edit = /^\/(忘记|纠正)\s+([MFES]\d+)(?:\s+([\s\S]+))?$/u.exec(text);

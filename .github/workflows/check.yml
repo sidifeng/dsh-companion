@@ -19,6 +19,7 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run check
+      - run: node scripts/privacy-check.mjs
       - run: npm test
       - run: npm pack --ignore-scripts
   publish:

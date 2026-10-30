@@ -38,6 +38,7 @@ export class InterestMemory {
     this.db.exec('BEGIN IMMEDIATE;');
     try {
       this.db.prepare('DELETE FROM interests WHERE app=?').run(this.app); this.db.prepare('DELETE FROM reflections WHERE app=?').run(this.app);
+      this.db.prepare("INSERT INTO flags SELECT app,'reflection:'||bvid,'cleared' FROM experiences WHERE app=? ON CONFLICT(app,name) DO UPDATE SET value='cleared'").run(this.app);
       this.db.prepare("INSERT INTO flags VALUES(?,'interestEpoch',?) ON CONFLICT(app,name) DO UPDATE SET value=excluded.value").run(this.app,String(Number(this.epoch())+1));
       this.db.exec('COMMIT;');
     } catch(error) {this.db.exec('ROLLBACK;');throw error;}

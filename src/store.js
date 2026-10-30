@@ -150,6 +150,7 @@ export class MemoryStore {
       let count = 0;
       for (const table of ['memories', 'facts', 'fact_history', 'episodes', 'semantic_vectors', 'biology_events', 'stories', 'story_steps', 'fact_observations']) count += this.db.prepare(`DELETE FROM ${table} WHERE owner=?`).run(owner).changes;
       this.db.prepare('UPDATE biology SET state=? WHERE owner=?').run(JSON.stringify(initialBiology({}, e.receivedAt)), owner);
+      this.db.prepare("DELETE FROM capabilities WHERE scope=? AND capability='memory-analysis'").run(owner);
       this.db.prepare("UPDATE profiles SET summary='',familiarity=0,mood=0,interactions=0,last_at=0,last_growth=0,epoch=epoch+1 WHERE owner=?").run(owner);
       this.db.exec('COMMIT;'); return count;
     } catch (error) { this.db.exec('ROLLBACK;'); throw error; }

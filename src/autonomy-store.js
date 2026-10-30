@@ -62,11 +62,23 @@ export class AutonomyStore {
     this.db.prepare('INSERT INTO experiences(app,bvid,title,summary,reaction,shareworthy,evidence,at) VALUES(?,?,?,?,?,?,?,?)')
       .run(this.appId, video.bvid, video.title.slice(0, 300), analysis.summary, analysis.reaction, Number(analysis.shareworthy), JSON.stringify(evidence), at);
     this.db.prepare("UPDATE videos SET state='viewed' WHERE app=? AND bvid=?").run(this.appId, video.bvid);
-    this.interests.apply(video,analysis.reflections,evidence,at,interestEpoch);
+    this.reviewExperience(video,analysis,evidence,at,interestEpoch);
     this.db.exec('COMMIT;');
     } catch(error) {this.db.exec('ROLLBACK;');throw error;}
   }
   experiences(count = 4) { return this.db.prepare('SELECT bvid,title,summary,reaction,shareworthy,at FROM experiences WHERE app=? ORDER BY id DESC LIMIT ?').all(this.appId, count); }
+  pendingReviews(count = 2) {
+    return this.db.prepare(`SELECT bvid,title,evidence,at FROM experiences e WHERE app=?
+      AND NOT EXISTS(SELECT 1 FROM flags f WHERE f.app=e.app AND f.name='reflection:'||e.bvid AND f.value IN ('saved','empty','cleared'))
+      AND NOT EXISTS(SELECT 1 FROM reflections r WHERE r.app=e.app AND r.bvid=e.bvid)
+      ORDER BY at DESC LIMIT ?`).all(this.appId,count).map(r=>({...r,evidence:JSON.parse(r.evidence)}));
+  }
+  reviewExperience(video,analysis,evidence,at,epoch) {
+    if (epoch!==this.interests.epoch()) return false;
+    const saved=this.interests.apply(video,analysis.reflections,evidence,at,epoch);
+    this.setFlag(`reflection:${video.bvid}`,saved?'saved':analysis.reflectionStatus==='empty'?'empty':'failed');
+    return saved;
+  }
   shareable(kind, target, now) {
     return this.db.prepare(`SELECT bvid,title,summary,reaction,at FROM experiences e WHERE app=? AND shareworthy=1 AND at>=?
       AND NOT EXISTS (SELECT 1 FROM attempts a WHERE a.app=e.app AND a.kind=? AND a.target=? AND a.bvid=e.bvid AND a.state IN ('sent','sending','uncertain'))

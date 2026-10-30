@@ -17,7 +17,7 @@ import {Config} from '../src/config.js';
 const start=Date.parse('2026-10-31T12:00:00+08:00'), DAY=86400000;
 const e=(id='one', extra={})=>({appId:'bot',scope:'c2c',targetId:'A',senderId:'A',eventId:id,receivedAt:start,text:'今天修好了那把椅子',...extra});
 const story=(extra={})=>({title:'修椅子',stage:'progress',text:'椅子已经拆开',evidence:'椅子已经拆开',subject:'speaker',confidence:.95,...extra});
-const analysis=(extra={})=>({facts:[],summary:'',...extra});
+const analysis=(extra={})=>({facts:[],stories:[],followups:[],resolutions:[],summary:'',...extra});
 const ownStore=t=>{const s=new MemoryStore(':memory:');t.after(()=>s.close());return s;};
 const put=(s,event,raw)=>s.applyAnalysis(event,validateAnalysis(analysis(raw),event.text,{now:event.receivedAt,stories:s.life.list(event),plans:s.plans(event)}),s.profile(event).epoch);
 const video=n=>({bvid:`BV${String(n).padStart(10,'0')}`,title:'猫玩纸箱',durationSeconds:20});
