@@ -2,7 +2,7 @@
 
 专门服务于 QQ 官方机器人的 DeepSeek Harness 插件。默认是自然、温和的朋友，不固定名字。使用官方 AppID/AppSecret，不登录个人 QQ，不依赖 OneBot。
 
-当前为 **0.2.0-alpha.3 预览版**，面向 DSH **0.2.1-rc.2**、Node.js **>=22.13**。安装时默认关闭，配置并停用旧 QQ 接入后启用。不是腾讯或 DeepSeek 官方产品。
+当前为 **0.2.0-alpha.4 预览版**，面向 DSH **0.2.1-rc.2**、Node.js **>=22.13**。安装时默认关闭，配置并停用旧 QQ 接入后启用。不是腾讯或 DeepSeek 官方产品。
 
 ## 能力与验证范围
 
@@ -16,7 +16,7 @@
 | 视频 | FFmpeg 抽取最多 3 个时间点，再调用视觉模型；默认仅前 180 秒。QQ 视频描述已验证；不分析音轨，不代表连续观看 |
 | 语音 | 本机 WAV 转 QQ SILK 后发送；QQ 私聊接收和播放已验证 |
 | B站 | 热门、BV 标题/简介、公开字幕、公开短视频画面抽样；限 180 秒/25 MB、无需登录付费的单段 MP4。QQ 画面描述已获用户确认 |
-| 唱歌 | 本机 ACE-Step.cpp 生成原创中文短歌，转 SILK 发送；默认上限 20 秒。RX 6800 XT 本地实测 12 秒音频约 6.4 秒完成，QQ 唱歌待验收 |
+| 唱歌 | 本机 ACE-Step.cpp 音乐规划模型生成音频编码，再合成原创中文短歌并转 SILK 发送；默认 30 秒。RX 6800 XT 约 16 秒生成 29 秒样本，用户确认能听清唱词；新版 QQ 端待复测 |
 
 持续自主刷视频、完整音视频理解、主动消息授权与调度尚未完成。当前是收到消息后回应的预览版本，唱歌限短片段。
 
@@ -48,7 +48,7 @@ https://raw.githubusercontent.com/sidifeng/dsh-companion/market-index/index.json
 
 每版固定指向完整 Git 提交 SHA。保留这个索引来源，新版发布后刷新市场并选择新版更新。数据库放在独立数据目录，不随代码更新覆盖。
 
-维护者修改代码后，提高 `package.json` 和锁文件中的版本号（例如 `npm version 0.2.0-alpha.4 --no-git-tag-version`），更新 `RELEASE_NOTES.md`，提交并推送 `main`。Actions 在 Windows/Linux 检查通过后自动更新 `market-index` 分支并创建预览 Release。只上传代码、不提高版本号，不会覆盖已经发布的版本。工作流使用 GitHub 短期令牌，无需上传 QQ 密钥。
+维护者修改代码后，提高 `package.json` 和锁文件中的版本号（例如 `npm version 0.2.0-alpha.5 --no-git-tag-version`），更新 `RELEASE_NOTES.md`，提交并推送 `main`。Actions 在 Windows/Linux 检查通过后自动更新 `market-index` 分支并创建预览 Release。只上传代码、不提高版本号，不会覆盖已经发布的版本。工作流使用 GitHub 短期令牌，无需上传 QQ 密钥。
 
 ## 配置
 
@@ -82,7 +82,8 @@ singing:
   enabled: false
   baseUrl: http://127.0.0.1:8085
   synthModel: acestep-v15-turbo-Q8_0.gguf
-  maxSeconds: 20
+  lmModel: acestep-5Hz-lm-0.6B-Q8_0.gguf
+  maxSeconds: 30
   timeoutMs: 105000
 ```
 
@@ -90,7 +91,7 @@ singing:
 
 ### 本地唱歌服务
 
-使用 [ACE-Step.cpp](https://github.com/ServeurpersoCom/acestep.cpp) 的 Vulkan 后端；本机验证版本为 `de858d8 (2026-10-16)`。按上游 README 获取 Windows 程序及 Vulkan/CPU DLL，在独立模型目录放入 [GGUF 模型](https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/tree/main)中的 `Qwen3-Embedding-0.6B-Q8_0.gguf`、`acestep-v15-turbo-Q8_0.gguf`、`vae-BF16.gguf`，共约 3.67 GB。下载后对照模型仓库 SHA256 校验。歌词由 DeepSeek 创作，只调用 `/synth`，不需要额外的音乐语言模型。
+使用 [ACE-Step.cpp](https://github.com/ServeurpersoCom/acestep.cpp) 的 Vulkan 后端；本机验证版本为 `de858d8 (2026-10-16)`。按上游 README 获取 Windows 程序及 Vulkan/CPU DLL，在独立模型目录放入 [GGUF 模型](https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/tree/main)中的 `Qwen3-Embedding-0.6B-Q8_0.gguf`、`acestep-v15-turbo-Q8_0.gguf`、`vae-BF16.gguf`、`acestep-5Hz-lm-0.6B-Q8_0.gguf`，共约 4.38 GB。下载后对照模型仓库 SHA256 校验。歌词由 DeepSeek 创作；本机 `/lm` 负责生成音乐音频编码，随后 `/synth` 合成声音。alpha.3 只用直接扩散，实测出现伴奏或无词哼唱；升级后需补充 LM 文件，不能把能播放音频视为唱词已通过。
 
 在程序目录启动，替换模型目录为自己的绝对路径：
 

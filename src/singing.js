@@ -41,16 +41,15 @@ export function extractWav(bytes, contentType) {
 // ACE-Step.cpp 的异步 job API。只生成一段原创歌曲，不接收参考音频或任意文件路径。
 export async function generateSong({ caption, lyrics, seconds }, config, directory, ffmpegPath, signal, fetchImpl = fetch) {
   if (!config.enabled) throw new Error('歌声合成尚未启用。');
-  if (typeof caption !== 'string' || !caption.trim() || caption.length > 600 || typeof lyrics !== 'string' || !lyrics.trim() || lyrics.length > 500) throw new Error('歌曲需要简短风格说明与歌词。');
-  const duration = Math.min(config.maxSeconds, Math.max(8, Number.isFinite(seconds) ? seconds : 20));
+  if (typeof caption !== 'string' || !caption.trim() || caption.length > 600 || typeof lyrics !== 'string' || lyrics.length > 500 || !/\p{L}/u.test(lyrics.replace(/\[[^\]\r\n]{0,80}\]/gu, ''))) throw new Error('歌曲需要简短风格说明与实际歌词。');
+  const duration = Math.min(config.maxSeconds, Math.max(20, Number.isFinite(seconds) ? seconds : 30));
   const bounded = AbortSignal.any([signal ?? new AbortController().signal, AbortSignal.timeout(config.timeoutMs)]);
   const request = (path, options = {}) => fetchImpl(localServiceUrl(config.baseUrl, path), { redirect: 'error', signal: bounded, ...options });
   let id; let done = false;
-  try {
-    const queued = JSON.parse((await boundedBody(await request('/synth', { method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ caption, lyrics, duration, synth_model: config.synthModel, vocal_language: 'zh',
-        bpm: 90, keyscale: 'C major', timesignature: '4', inference_steps: 8, guidance_scale: 1, shift: 3,
-        synth_batch_size: 1, output_format: 'wav16' }) }), 65536)).toString());
+  const runJob = async (endpoint, payload) => {
+    id = undefined; done = false; bounded.throwIfAborted();
+    const queued = JSON.parse((await boundedBody(await request(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload) }), 65536)).toString());
     if (!/^[a-f\d]{1,32}$/iu.test(String(queued.id))) throw new Error('歌声服务没有返回有效任务编号。');
     id = String(queued.id);
     while (true) {
@@ -60,7 +59,21 @@ export async function generateSong({ caption, lyrics, seconds }, config, directo
       if (!['queued', 'running'].includes(status.status)) throw new Error('歌声生成失败或已取消。');
       await sleep(1000, undefined, { signal: bounded });
     }
-    const result = await request(`/job?id=${id}&result=1`);
+    return request(`/job?id=${id}&result=1`);
+  };
+  try {
+    const payload = { caption: `Mandarin Chinese song with clear prominent sung lead vocals from the beginning, singing the provided lyrics. ${caption}`.slice(0, 512),
+      lyrics, duration, synth_model: config.synthModel, vocal_language: 'zh', bpm: 90, keyscale: 'C major', timesignature: '4',
+      inference_steps: 8, guidance_scale: 1, shift: 3, synth_batch_size: 1, output_format: 'wav16' };
+    if (config.lmModel) {
+      const planned = JSON.parse((await boundedBody(await runJob('/lm', { ...payload, lm_model: config.lmModel,
+        lm_mode: 'generate', lm_batch_size: 1, use_cot_caption: false }), 262144)).toString());
+      const codes = Array.isArray(planned) && planned.length === 1 ? planned[0]?.audio_codes : undefined;
+      if (typeof codes !== 'string' || !codes.trim() || codes.length > 32768) throw new Error('音乐规划模型没有生成有效音频编码。');
+      // 只接受音乐编码，保留原始歌词、时长和本机合成配置。
+      payload.audio_codes = codes;
+    }
+    const result = await runJob('/synth', payload);
     const wav = extractWav(await boundedBody(result, 16 * 1024 * 1024), result.headers.get('content-type') ?? '');
     bounded.throwIfAborted(); await mkdir(directory, { recursive: true });
     const raw = join(directory, `${randomUUID()}.wav`); const mono = join(directory, `${randomUUID()}.wav`);

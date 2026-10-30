@@ -42,8 +42,8 @@ export function registerFeatures({ ctx, runtime, config, directory, transport, f
       const { e, signal } = context(exec); return speak(e, args.text, signal);
     }));
   let singingBusy = false;
-  if (config.singing.enabled) register(textTool('companion_sing', '用本机歌声模型生成并发送一段原创中文短歌。请先自行创作简短歌词；caption 写音乐风格，不指定真实歌手身份。只生成片段，不能声称唱完一首长歌。',
-    { caption: { type: 'string', maxLength: 600 }, lyrics: { type: 'string', maxLength: 500 }, seconds: { type: 'number', minimum: 8, maximum: config.singing.maxSeconds } },
+  if (config.singing.enabled) register(textTool('companion_sing', '用本机歌声模型生成并发送一段原创中文短歌，默认 30 秒。先创作四到八句可唱的原创歌词；caption 写音乐风格和清晰主唱，不指定真实歌手身份。只生成片段，不能声称唱完一首长歌。',
+    { caption: { type: 'string', maxLength: 600 }, lyrics: { type: 'string', maxLength: 500 }, seconds: { type: 'number', minimum: 20, maximum: config.singing.maxSeconds } },
     ['caption', 'lyrics'], async (args, exec) => {
       const { e, signal } = context(exec);
       if (singingBusy) throw new Error('本机正在生成另一段歌曲，请稍后再试。');
