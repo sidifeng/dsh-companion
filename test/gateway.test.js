@@ -104,6 +104,15 @@ test('真实腾讯 SessionManager/入站处理 + 模拟 QQ 与模型，群内不
   await bot.receive(message('bio', '和你聊天很开心'));
   assert.match(prompts.at(-1).prompt.variables.companion_biology, /初识/u);
   assert.equal(gateway.runtime.store.db.prepare('SELECT count(*) n FROM biology_events').get().n, 1);
+  const beforeCommands = prompts.length;
+  await bot.receive(message('group-relation', '<@ABCDEF0123456789> /关系', group));
+  assert.match(bot.sent.at(-1).content, /熟悉度.*信任/su);
+  await bot.receive(message('group-emotion', '/情绪 <@!ABCDEF0123456789>', group));
+  assert.match(bot.sent.at(-1).content, /当前表达/u);
+  assert.equal(prompts.length, beforeCommands, '带 OpenID 标记的群命令不应进入语言模型');
+  const beforeNonMention = bot.sent.length;
+  await bot.receive(message('not-mentioned-command', '<@SOMEONE_ELSE> /关系', { ...group, rawEventType: 'GROUP_MESSAGE_CREATE' }));
+  assert.equal(bot.sent.length, beforeNonMention, '正文标记不能绕过平台 @ 检查');
 });
 
 test('图片工具不能读其他人附件或任意本地/远程文件', async t => {

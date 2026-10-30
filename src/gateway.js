@@ -5,7 +5,7 @@ import { homedir } from 'node:os';
 import { loadUpstream } from './upstream.js';
 import { CompanionRuntime } from './runtime.js';
 import { admits, validateLiveConfig } from './config.js';
-import { conversation, partition, opaqueId, envelope } from './identity.js';
+import { conversation, partition, opaqueId, envelope, normalizeCommandMentions } from './identity.js';
 import { attachmentMiddleware } from './media.js';
 import { consolidateMemory } from './memory.js';
 import { registerFeatures } from './features.js';
@@ -182,7 +182,7 @@ export async function startGateway(ctx, config, dependencies = {}) {
     await next();
   });
   bot.use(mentionGate({ requireMentionInGroup: config.requireMention }));
-  bot.use(contentSanitizer({ parseFaceTags: true }));
+  bot.use(contentSanitizer({ parseFaceTags: true, transform: (text, mCtx) => normalizeCommandMentions(text, mCtx.message, mCtx.state.mention?.wasMentioned) }));
   // 同群不同人的事件逐条处理，禁止 merge 后丢失真正的发送者。
   bot.use(async (mCtx, next) => {
     const received = runtime.receive(config.appId, mCtx.message);

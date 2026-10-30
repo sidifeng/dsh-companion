@@ -7,6 +7,15 @@ export function requireId(value, label) {
   return value;
 }
 
+// 官方群 @ 标记可能使用机器人 OpenID，而非 AppID。只在上游已确认 @ 后
+// 清理命令两侧的标记；正文不能借标记绕过 mentionGate 或改变身份。
+export function normalizeCommandMentions(text, message, wasMentioned) {
+  if (message.kind !== 'group' || !wasMentioned) return text;
+  const command = text.replace(/^(?:\s*<@!?[A-Za-z0-9_-]{1,256}>\s*)+/u, '')
+    .replace(/(?:\s*<@!?[A-Za-z0-9_-]{1,256}>\s*)+$/u, '').trim();
+  return /^(?:\/|记住[：:])/u.test(command) ? command : text;
+}
+
 // 不从正文/昵称提取身份；只接收 SDK 规范化后的结构化字段。
 export function envelope(appId, message, now = Date.now()) {
   requireId(appId, 'appId');
