@@ -31,7 +31,7 @@ export async function cleanupMedia(directory, ttlHours = 24, now = Date.now()) {
   if (ttlHours <= 0) return;
   for (const entry of await readdir(directory, { withFileTypes: true }).catch(() => [])) {
     // 只处理本插件创建的 UUID 文件，不跟随目录、符号链接或用户放入的其他文件。
-    if (!entry.isFile() || !/^[a-f0-9-]{36}\.(?:jpg|img|video|silk)$/u.test(entry.name)) continue;
+    if (!entry.isFile() || !/^[a-f0-9-]{36}\.(?:jpg|img|video|silk|wav)$/u.test(entry.name)) continue;
     const file = join(directory, entry.name);
     const info = await stat(file).catch(() => null);
     if (info && now - info.mtimeMs > ttlHours * 3600000) await unlink(file).catch(() => {});

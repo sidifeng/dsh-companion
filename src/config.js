@@ -27,6 +27,13 @@ export const Config = Schema.intersect([
       maxSeconds: Schema.number().min(1).max(600).default(180),
     }).default({}),
     bilibili: Schema.object({ enabled: Schema.boolean().default(true) }).default({}),
+    singing: Schema.object({
+      enabled: Schema.boolean().default(false),
+      baseUrl: Schema.string().default('http://127.0.0.1:8085'),
+      synthModel: Schema.string().default('acestep-v15-turbo-Q8_0.gguf'),
+      maxSeconds: Schema.number().min(8).max(45).default(20),
+      timeoutMs: Schema.number().min(10000).max(240000).default(105000),
+    }).default({}),
   }),
 ]);
 

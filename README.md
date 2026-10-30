@@ -2,7 +2,7 @@
 
 专门服务于 QQ 官方机器人的 DeepSeek Harness 插件。默认是自然、温和的朋友，不固定名字。使用官方 AppID/AppSecret，不登录个人 QQ，不依赖 OneBot。
 
-当前为 **0.2.0-alpha.2 预览版**，面向 DSH **0.2.1-rc.2**、Node.js **>=22.13**。安装时默认关闭，配置并停用旧 QQ 接入后启用。不是腾讯或 DeepSeek 官方产品。
+当前为 **0.2.0-alpha.3 预览版**，面向 DSH **0.2.1-rc.2**、Node.js **>=22.13**。安装时默认关闭，配置并停用旧 QQ 接入后启用。不是腾讯或 DeepSeek 官方产品。
 
 ## 能力与验证范围
 
@@ -15,10 +15,10 @@
 | 人物关系 | 按人和场景积累熟悉度、缓慢衰减的情绪；不因缺席惩罚用户 |
 | 视频 | FFmpeg 抽取最多 3 个时间点，再调用视觉模型；默认仅前 180 秒。QQ 视频描述已验证；不分析音轨，不代表连续观看 |
 | 语音 | 本机 WAV 转 QQ SILK 后发送；QQ 私聊接收和播放已验证 |
-| B站 | 热门、BV 标题/简介、公开字幕；新增公开短视频画面抽样，限 180 秒/25 MB、无需登录付费的单段 MP4。下载和抽帧本机已验证，新增 B站画面工具 QQ 端待验收 |
-| 唱歌 | 未接入歌声合成引擎；普通 TTS 不能替代唱歌 |
+| B站 | 热门、BV 标题/简介、公开字幕、公开短视频画面抽样；限 180 秒/25 MB、无需登录付费的单段 MP4。QQ 画面描述已获用户确认 |
+| 唱歌 | 本机 ACE-Step.cpp 生成原创中文短歌，转 SILK 发送；默认上限 20 秒。RX 6800 XT 本地实测 12 秒音频约 6.4 秒完成，QQ 唱歌待验收 |
 
-持续自主刷视频、完整音视频理解、唱歌、主动消息授权与调度尚未完成。当前是收到消息后回应的预览版本。
+持续自主刷视频、完整音视频理解、主动消息授权与调度尚未完成。当前是收到消息后回应的预览版本，唱歌限短片段。
 
 ## 安装与更新
 
@@ -48,7 +48,7 @@ https://raw.githubusercontent.com/sidifeng/dsh-companion/market-index/index.json
 
 每版固定指向完整 Git 提交 SHA。保留这个索引来源，新版发布后刷新市场并选择新版更新。数据库放在独立数据目录，不随代码更新覆盖。
 
-维护者修改代码后，提高 `package.json` 和锁文件中的版本号（例如 `npm version 0.2.0-alpha.2 --no-git-tag-version`），更新 `RELEASE_NOTES.md`，提交并推送 `main`。Actions 在 Windows/Linux 检查通过后自动更新 `market-index` 分支并创建预览 Release。只上传代码、不提高版本号，不会覆盖已经发布的版本。工作流使用 GitHub 短期令牌，无需上传 QQ 密钥。
+维护者修改代码后，提高 `package.json` 和锁文件中的版本号（例如 `npm version 0.2.0-alpha.4 --no-git-tag-version`），更新 `RELEASE_NOTES.md`，提交并推送 `main`。Actions 在 Windows/Linux 检查通过后自动更新 `market-index` 分支并创建预览 Release。只上传代码、不提高版本号，不会覆盖已经发布的版本。工作流使用 GitHub 短期令牌，无需上传 QQ 密钥。
 
 ## 配置
 
@@ -78,9 +78,27 @@ video:
   maxSeconds: 180
 bilibili:
   enabled: true
+singing:
+  enabled: false
+  baseUrl: http://127.0.0.1:8085
+  synthModel: acestep-v15-turbo-Q8_0.gguf
+  maxSeconds: 20
+  timeoutMs: 105000
 ```
 
 语音是独立的本机服务，不随插件打包。兼容接口：`POST /v1/speak/file` 接收 `{text,voice,format:"wav",sr:24000,cache:true}`，返回 WAV 字节。只接受 loopback 地址；服务未启动时如实报错。单段最多 60 秒。视频需要另装 FFmpeg 或填写可执行文件绝对路径。
+
+### 本地唱歌服务
+
+使用 [ACE-Step.cpp](https://github.com/ServeurpersoCom/acestep.cpp) 的 Vulkan 后端；本机验证版本为 `de858d8 (2026-10-16)`。按上游 README 获取 Windows 程序及 Vulkan/CPU DLL，在独立模型目录放入 [GGUF 模型](https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/tree/main)中的 `Qwen3-Embedding-0.6B-Q8_0.gguf`、`acestep-v15-turbo-Q8_0.gguf`、`vae-BF16.gguf`，共约 3.67 GB。下载后对照模型仓库 SHA256 校验。歌词由 DeepSeek 创作，只调用 `/synth`，不需要额外的音乐语言模型。
+
+在程序目录启动，替换模型目录为自己的绝对路径：
+
+```powershell
+.\ace-server.exe --host 127.0.0.1 --port 8085 --models "D:\models\ace-step" --device Vulkan0 --max-batch 1
+```
+
+确认 `/health` 正常、`/props` 列出的模型名与配置一致，再启用 `singing.enabled`；`video.ffmpegPath` 同时用于歌声转码。引擎只绑定本机，一次生成一段；取消或超时会请求终止原生任务。生成时间取决于硬件和片段长度，语音消息会压缩音质，歌词发音与音乐质量仍由生成模型决定。它不会承诺翻唱整首歌曲。模型、程序和音频不进入 GitHub 发布包。
 
 ## 聊天命令
 
@@ -89,6 +107,7 @@ bilibili:
 - `/纠正 F1 新内容`、`/忘记 F1`、`/忘记全部`：只修改本人当前场景资料，并切换到新上下文。
 - `/自动记忆 关` 或 `/自动记忆 开`；`/关系`；`/帮助`。
 - `/语音 你好，今天过得怎么样`：生成并发送语音。
+- `/唱歌 给我唱一段关于晚风和星光的原创短歌`：启用本地引擎后生成短歌。
 - `/回传附件`：回传本轮图片/视频，用于权限验收。
 - `/取消`：取消本人正在处理的任务；已发出的消息不能撤回。
 
@@ -119,7 +138,9 @@ npm run demo
 
 腾讯内部接口集中在 `src/upstream.js`，锁定 0.5.3；升级需重新验收。`DSH_TEST_HOST_PACKAGE` 配合 `node --import ./scripts/use-host.mjs --test` 可使用实际宿主模块验证。自动测试中的 QQ/模型是模拟对象，不代表账号权限已通过。
 
-正常启动：`npx @deepseek-ai/dsh web`。报 `EADDRINUSE 127.0.0.1:3080` 表示已有进程监听，先确认原 DSH 是否仍在运行，不要重复启动。源码更新需重载后端，仅刷新网页不会加载新代码。
+正常启动：`npx @deepseek-ai/dsh web`。源码目录的 Windows 用户也可双击 `启动机器人.cmd`：如果 3080 已由 DSH 使用，直接打开现有页面；其他程序占用时停止并提示，不另起重复实例。若存在本机自建的 `.local/acestep/start-local-services.ps1`，会先调用它恢复本地语音/唱歌服务；其他安装者需自行启动这些服务。
+
+报 `EADDRINUSE 127.0.0.1:3080` 表示已有进程监听。源码更新需重载后端，仅刷新网页不会加载新代码；dshmarket 更新后的“立即重启”已验证。关闭网页不等于关闭 DSH，电脑关机后仍需重新启动 DSH 和本机服务。
 
 ## 来源
 

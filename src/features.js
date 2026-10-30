@@ -2,6 +2,7 @@ import { realpathSync } from 'node:fs';
 import { synthesizeVoice } from './voice.js';
 import { videoFrames } from './video.js';
 import { readBilibili, browseBilibili, downloadPublicBilibili } from './bilibili.js';
+import { generateSong } from './singing.js';
 
 export function textTool(name, description, properties, required, execute) {
   return { name, description, parameters: { type: 'object', properties, required, additionalProperties: false },
@@ -39,6 +40,22 @@ export function registerFeatures({ ctx, runtime, config, directory, transport, f
   if (config.voice.enabled) register(textTool('companion_speak', '把用户请求的话说成中文语音，并发送到当前 QQ 聊天。',
     { text: { type: 'string', maxLength: config.voice.maxChars } }, ['text'], async (args, exec) => {
       const { e, signal } = context(exec); return speak(e, args.text, signal);
+    }));
+  let singingBusy = false;
+  if (config.singing.enabled) register(textTool('companion_sing', '用本机歌声模型生成并发送一段原创中文短歌。请先自行创作简短歌词；caption 写音乐风格，不指定真实歌手身份。只生成片段，不能声称唱完一首长歌。',
+    { caption: { type: 'string', maxLength: 600 }, lyrics: { type: 'string', maxLength: 500 }, seconds: { type: 'number', minimum: 8, maximum: config.singing.maxSeconds } },
+    ['caption', 'lyrics'], async (args, exec) => {
+      const { e, signal } = context(exec);
+      if (singingBusy) throw new Error('本机正在生成另一段歌曲，请稍后再试。');
+      singingBusy = true;
+      try {
+        const song = await generateSong(args, config.singing, directory, config.video.ffmpegPath, signal);
+        signal.throwIfAborted();
+        const result = await runtime.queue.send(e, [{ kind: 'voice', localPath: song.localPath }], transport);
+        if (result[0]?.status !== 'sent') throw new Error('歌曲发送未确认成功，不会自动重发。');
+        runtime.store.observe(e.scope, 'send:song', 'verified');
+        return { text: `已发送约 ${Math.ceil(song.durationMs / 1000)} 秒的原创短歌。` };
+      } finally { singingBusy = false; }
     }));
   if (config.video.enabled && vision) register(textTool('companion_describe_video', '抽样理解本轮短视频附件的画面。只观察几个时间点，不听音轨，不代表完整观看。',
     { video: { type: 'string' }, prompt: { type: 'string' } }, ['video'], async (args, exec) => {

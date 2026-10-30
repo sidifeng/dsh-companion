@@ -191,7 +191,7 @@ export async function startGateway(ctx, config, dependencies = {}) {
       catch { if (!e.signal.aborted) await runtime.sendText(e, `语音未发送成功，请检查本机语音服务；单次请控制在 ${config.voice.maxChars} 字内。`, transport); }
       return;
     }
-    if (e.text.trim() === '/唱歌') { await runtime.sendText(e, '我还没有接入歌声合成引擎，目前能发普通语音，暂时不能真正唱歌。', transport); return; }
+    if (e.text.trim() === '/唱歌' && !config.singing.enabled) { await runtime.sendText(e, '我还没有启用歌声合成引擎，目前能发普通语音。', transport); return; }
     if (e.text.trim() === '/回传附件') {
       const media = (mCtx.state.downloadedFiles ?? []).flatMap(file => {
         const kind = file.contentType;

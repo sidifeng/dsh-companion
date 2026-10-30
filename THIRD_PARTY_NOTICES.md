@@ -29,3 +29,5 @@ SOFTWARE.
 DeepSeek Harness packages, Cordis, Schemastery, js-yaml and their transitive dependencies retain their respective upstream license files. No SurfCore source or user memory was copied into this package.
 
 silk-wasm 3.7.1 provides WAV/PCM to SILK conversion and retains its package license and embedded codec notices. Piper voice models, FFmpeg binaries and local speech servers are separate installations and are not redistributed in this package.
+
+The optional singing adapter uses the local HTTP API of ACE-Step.cpp (https://github.com/ServeurpersoCom/acestep.cpp). ACE-Step.cpp executables, GGUF weights and ACE-Step model assets retain their upstream licenses and are separate installations; they are not redistributed in this package.
