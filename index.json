@@ -32,7 +32,7 @@
           "source": {
             "type": "git",
             "url": "https://github.com/sidifeng/dsh-companion",
-            "commit": "5c8578fc33004e0eb97d963d07325e96f47e200a"
+            "commit": "2a0d90b0c9757ccfd2c393ede5686a91b61d5cba"
           },
           "engines": {
             "dsh": ">=0.2.1-rc.2 <0.2.2"
@@ -44,7 +44,7 @@
           "source": {
             "type": "git",
             "url": "https://github.com/sidifeng/dsh-companion",
-            "commit": "bf3581ff0518d81dd188f865e1580a642323a6c8"
+            "commit": "43d20eaea11311f7129394cc130493010d4e5832"
           },
           "engines": {
             "dsh": ">=0.2.1-rc.2 <0.2.2"
@@ -56,7 +56,7 @@
           "source": {
             "type": "git",
             "url": "https://github.com/sidifeng/dsh-companion",
-            "commit": "8e8cd005950a0a6b0f86765cbc3874f5f80b7b33"
+            "commit": "fd0ac97fbb0e559dd97cd500ae6a058943978838"
           },
           "engines": {
             "dsh": ">=0.2.1-rc.2 <0.2.2"
@@ -68,7 +68,7 @@
           "source": {
             "type": "git",
             "url": "https://github.com/sidifeng/dsh-companion",
-            "commit": "845aa1e4ffbf8c7f98e4faaeefb1558db8267ec7"
+            "commit": "c96a537a7a6c9075d24d49e4b06ee5aa24857889"
           },
           "engines": {
             "dsh": ">=0.2.1-rc.2 <0.2.2"
@@ -80,7 +80,7 @@
           "source": {
             "type": "git",
             "url": "https://github.com/sidifeng/dsh-companion",
-            "commit": "281e48b84814a432463b64e04c8e49de0f2cd501"
+            "commit": "7456eeed4a943717a57496c55f147834e7c844f0"
           },
           "engines": {
             "dsh": ">=0.2.1-rc.2 <0.2.2"
@@ -92,7 +92,7 @@
           "source": {
             "type": "git",
             "url": "https://github.com/sidifeng/dsh-companion",
-            "commit": "836b39d0abf1c41a4e24491c629a53ad8a7c159e"
+            "commit": "3ae4c86979909143dfe5d8c7afce76a4882b74da"
           },
           "engines": {
             "dsh": ">=0.2.1-rc.2 <0.2.2"
@@ -104,7 +104,7 @@
           "source": {
             "type": "git",
             "url": "https://github.com/sidifeng/dsh-companion",
-            "commit": "28d62bde1764289b15f2f4b46916bd68bbb9c59b"
+            "commit": "1597a440480ef88a0d4d969961ec0a5179ee08da"
           },
           "engines": {
             "dsh": ">=0.2.1-rc.2 <0.2.2"
@@ -116,7 +116,7 @@
           "source": {
             "type": "git",
             "url": "https://github.com/sidifeng/dsh-companion",
-            "commit": "55eb38dc76acd3d3d5eeff4b9e218c9ed7fdd585"
+            "commit": "b274d24c637e02649193c5cef5607992da17da99"
           },
           "engines": {
             "dsh": ">=0.2.1-rc.2 <0.2.2"
@@ -128,7 +128,7 @@
           "source": {
             "type": "git",
             "url": "https://github.com/sidifeng/dsh-companion",
-            "commit": "5d3b43ecf909011a99ecfedcd9e2c414f016b54c"
+            "commit": "26abe87c25de0f7da0972650d9969a7db45681da"
           },
           "engines": {
             "dsh": ">=0.2.1-rc.2 <0.2.2"
@@ -140,7 +140,7 @@
           "source": {
             "type": "git",
             "url": "https://github.com/sidifeng/dsh-companion",
-            "commit": "d6725d8e04e9855bbb394fc1b83d157af3d919eb"
+            "commit": "46ab8aae5cf4d038e5d82a9446863d1a156aa6e5"
           },
           "engines": {
             "dsh": ">=0.2.1-rc.2 <0.2.2"
@@ -152,7 +152,7 @@
           "source": {
             "type": "git",
             "url": "https://github.com/sidifeng/dsh-companion",
-            "commit": "dcb5fda07e25ae3c094e972a79c48bdd276ff3de"
+            "commit": "74ec05114a6a4d696ba91dbed038a52c6427b2f7"
           },
           "engines": {
             "dsh": ">=0.2.1-rc.2 <0.2.2"
@@ -164,7 +164,7 @@
           "source": {
             "type": "git",
             "url": "https://github.com/sidifeng/dsh-companion",
-            "commit": "a9c554a101a57641834c12755c7a265d57d476aa"
+            "commit": "8f61186f2b19ee8da5af4f0e253dfb83e9e2b5c3"
           },
           "engines": {
             "dsh": ">=0.2.1-rc.2 <0.2.2"
@@ -176,7 +176,7 @@
           "source": {
             "type": "git",
             "url": "https://github.com/sidifeng/dsh-companion",
-            "commit": "1d3ad3606393f2a73d1c98f83c493b560080d866"
+            "commit": "15cb3f665c268753ce67ff3c45d0b5d2ac08550a"
           },
           "engines": {
             "dsh": ">=0.2.1-rc.2 <0.2.2"
