@@ -41,11 +41,12 @@ function learnStrategy(s, a, adaptive) {
   if (a.kind !== 'feedback' || !a.feedback || !s.lastEventAt) return;
   const key = s.strategy; const score = s.strategies[key] ?? { good: 0, bad: 0 };
   score[a.feedback === 'helpful' ? 'good' : 'bad'] += 1;
+  score.days = [...new Set([...(score.days ?? []), s.day])].slice(-30);
   s.strategies[key] = score;
   s.feedbackDays = [...new Set([...s.feedbackDays, s.day])].slice(-30);
   const total = score.good + score.bad;
   // 默认不学习。明确反馈达到跨日门槛才移动，单日最多一步，参数始终有界。
-  if (!adaptive || total < 8 || s.feedbackDays.length < 3 || s.lastLearningDay === s.day) return;
+  if (!adaptive || total < 8 || score.days.length < 3 || s.lastLearningDay === s.day) return;
   const target = score.good / total;
   s.warmth = clamp(s.warmth + clamp(0.05 * (target - s.warmth), -0.01, 0.01), 0.35, 0.65);
   s.expressiveness = clamp(s.expressiveness + clamp(0.03 * (target - s.expressiveness), -0.01, 0.01), 0.35, 0.65);

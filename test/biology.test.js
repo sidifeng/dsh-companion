@@ -69,6 +69,11 @@ test('自动调参默认冻结，有足够跨日明确反馈也只能小步有�
   let state = updateBiology(initialBiology({}, now), a(), now).state;
   for (let i = 1; i <= 7; i++) state = updateBiology(state, a('feedback', { feedback: 'helpful' }), now + i * 12 * HOUR, { adaptive: true }).state;
   assert.equal(state.learningSteps, 0);
+  const mixed = initialBiology({}, now);
+  mixed.lastEventAt = now - HOUR; mixed.feedbackDays = [mixed.day - 2, mixed.day - 1, mixed.day];
+  mixed.strategies.natural = { good: 7, bad: 0, days: [mixed.day] };
+  const guarded = updateBiology(mixed, a('feedback', { feedback: 'helpful' }), now, { adaptive: true }).state;
+  assert.equal(guarded.learningSteps, 0, '别的策略的历史反馈日不能帮助当前策略越过跨日门槛');
 });
 
 test('评价必须有原文、归属、目标及置信度，模型不能直接写信任或兑现无依据约定', () => {
