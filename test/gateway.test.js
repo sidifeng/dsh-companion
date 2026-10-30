@@ -53,7 +53,9 @@ test('真实腾讯 SessionManager/入站处理 + 模拟 QQ 与模型，群内不
   const config = Config({ enabled: true, streaming: false, appId: 'fixture-bot', appSecret: 'fixture-not-a-secret', provider: 'fixture', model: 'fixture',
     access: { c2cMode: 'allowlist', c2cAllow: ['A'], groupMode: 'allowlist', groupAllow: ['GROUP'] },
     companion: { dataDir: dir, intervalMs: 0 } });
-  const gateway = await startGateway(ctx, config, { bot });
+  const gateway = await startGateway(ctx, config, { bot, autonomyTasks: {
+    draft: async data => { assert.equal(data.memories, undefined); return { send: true, text: '突然好奇大家更喜欢猫还是狗。', topic: '猫狗' }; },
+  } });
   t.after(async () => { await gateway.close(); assert.ok(dir.startsWith(join(tmpdir(), 'companion-gateway-'))); rmSync(dir, { recursive: true, force: true }); });
   const message = (id, text, extra = {}) => ({ kind: 'c2c', senderId: 'A', messageId: id, content: text, timestamp: Date.now(), ...extra });
   await bot.receive(message('remember', '记住：我喜欢橘猫'));
@@ -83,6 +85,10 @@ test('真实腾讯 SessionManager/入站处理 + 模拟 QQ 与模型，群内不
   await Promise.resolve(); assert.equal(bot.sent.length, beforeLate);
   await bot.receive(message('new-after-cancel', '继续聊'));
   assert.notEqual([...gateway.manager.sessions.values()].find(r => r.scope === 'c2c').sessionId, oldSession.header.id);
+  config.autonomy.enabled = true; config.autonomy.groupEnabled = true;
+  await gateway.autonomy.run({ browse: false, manual: true });
+  assert.deepEqual(bot.sent.at(-1).target, { scope: 'group', targetId: 'GROUP' });
+  assert.equal(bot.sent.at(-1).msgType, 0);
 });
 
 test('图片工具不能读其他人附件或任意本地/远程文件', async t => {

@@ -27,6 +27,23 @@ export const Config = Schema.intersect([
       maxSeconds: Schema.number().min(1).max(600).default(180),
     }).default({}),
     bilibili: Schema.object({ enabled: Schema.boolean().default(true) }).default({}),
+    autonomy: Schema.object({
+      enabled: Schema.boolean().default(false),
+      groupEnabled: Schema.boolean().default(false),
+      privateEnabled: Schema.boolean().default(false),
+      browseEnabled: Schema.boolean().default(false),
+      operatorIds: Schema.array(Schema.string()).default([]).description('仅这些官方私聊 OpenID 可调整自主活动'),
+      timezone: Schema.string().default('Asia/Shanghai'),
+      quietStart: Schema.number().min(0).max(23).step(1).default(23),
+      quietEnd: Schema.number().min(0).max(23).step(1).default(9),
+      chatIntervalMinutes: Schema.number().min(15).max(1440).default(30),
+      groupDaily: Schema.number().min(0).max(100).step(1).default(28),
+      privateDaily: Schema.number().min(0).max(10).step(1).default(2),
+      idleMinutes: Schema.number().min(0).max(60).default(3),
+      browseIntervalMinutes: Schema.number().min(60).max(1440).default(120),
+      browseDaily: Schema.number().min(0).max(12).step(1).default(7),
+      interests: Schema.string().default('猫、生活、科普、音乐'),
+    }).default({}),
     singing: Schema.object({
       enabled: Schema.boolean().default(false),
       baseUrl: Schema.string().default('http://127.0.0.1:8085'),
@@ -39,6 +56,7 @@ export const Config = Schema.intersect([
 ]);
 
 export function validateLiveConfig(config) {
+  new Intl.DateTimeFormat('en', { timeZone: config.autonomy.timezone }).format();
   if (!config.appId || !config.appSecret || config.appId === '__FROM_ENV__' || config.appSecret === '__FROM_ENV__') {
     throw new Error('请在本机设置中填写官方机器人 AppID 和 AppSecret。');
   }

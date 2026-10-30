@@ -10,6 +10,8 @@ import { attachmentMiddleware } from './media.js';
 import { consolidateMemory } from './memory.js';
 import { registerFeatures } from './features.js';
 import { cleanupMedia } from './video.js';
+import { AutonomyStore } from './autonomy-store.js';
+import { AutonomyEngine, createAutonomyTasks } from './autonomy.js';
 
 export function createTransport(bot, store) {
   return async (message, target) => {
@@ -81,7 +83,8 @@ export async function startGateway(ctx, config, dependencies = {}) {
   } };
   upstream.registerDescribeImageTool(visionCtx, config.vision, safeLogger);
   const mediaDir = join(dataDir, 'media');
-  const features = registerFeatures({ ctx, runtime, config, directory: mediaDir, transport, files: fileKinds, vision, register });
+  let observeVideo = () => {};
+  const features = registerFeatures({ ctx, runtime, config, directory: mediaDir, transport, files: fileKinds, vision, register, observeVideo: (...args) => observeVideo(...args) });
   const peerKey = e => {
     const profile = runtime.store.profile(e);
     // 每 24 次已整理交流换一段上下文；跨段资料从长期记忆召回，限制上下文增长。
@@ -100,6 +103,32 @@ export async function startGateway(ctx, config, dependencies = {}) {
     }
   }
   const manager = new CompanionSessions(ctx, ctx.agents, { ...config, preset: undefined }, safeLogger);
+  const autonomyStore = new AutonomyStore(join(dataDir, 'autonomy.sqlite'), config.appId);
+  observeVideo = (video, evidence) => {
+    try {
+      if (!autonomyStore.claimVideo(video.bvid, Date.now())) return;
+      autonomyStore.saveExperience(video, { summary: evidence.frames.map(f => `${f.seconds}秒：${f.text}`).join('\n').slice(0, 450), reaction: '', shareworthy: false }, { ...evidence, origin: 'requested' }, Date.now());
+    } catch { logger.warn('companion: 本次点播浏览记录未保存。'); }
+  };
+  const autonomy = new AutonomyEngine({ config, store: autonomyStore, memory: runtime.store,
+    tasks: dependencies.autonomyTasks ?? createAutonomyTasks({ ctx, config, vision, directory: mediaDir, route: () => manager.getEffectiveModel('group', 'autonomy') }),
+    busy: (scope, targetId) => (queued.get(conversation({ appId: config.appId, scope, targetId })) ?? 0) > 0,
+    permission: async (target, signal) => {
+      try {
+        const token = await bot.tokenManager.getAccessToken(config.appId, config.appSecret); signal.throwIfAborted();
+        const result = await bot.apiClient.request(token, 'GET', `/v2/groups/${encodeURIComponent(target)}/bot_state`, undefined, { timeoutMs: 10000 });
+        return typeof result.allow_proactive_msg === 'boolean' ? result.allow_proactive_msg : undefined;
+      } catch { signal.throwIfAborted(); return undefined; }
+    },
+    push: async ({ scope, targetId, text, sequence, signal }) => {
+      signal.throwIfAborted();
+      // 独立主动消息，绝不复用/伪造入站 msg_id，也不占用被动回复序号。
+      await bot.send({ target: { scope, targetId }, msgType: 0, content: text, extra: { msg_seq: sequence } });
+      runtime.store.observe(scope, 'send:proactive', 'verified');
+    },
+  });
+  runtime.autonomyContext = e => ({ experiences: autonomyStore.experiences(3),
+    recentProactive: autonomyStore.history(`chat:${e.scope}`, e.targetId, 3).filter(r => r.state === 'sent') });
   ctx.on('system-prompt/assemble', async (_assembly, context, next) => runtime.assemble(await next(), context.agent), { global: true });
   ctx.on('session/event', (session, event) => {
     const e = runtime.sessions.get(session.header.id);
@@ -124,6 +153,11 @@ export async function startGateway(ctx, config, dependencies = {}) {
   // 空白名单拒绝所有消息；不沿用上游空列表回退为 '*' 的行为。
   bot.use(async (mCtx, next) => { if (!stopping && admits(config, mCtx.message)) await next(); });
   bot.use(messageFilter({ skipSelfEcho: true }));
+  bot.use(async (mCtx, next) => {
+    const m = mCtx.message;
+    autonomy.noteActivity(m.kind, m.kind === 'group' ? m.groupOpenid : m.senderId);
+    await next();
+  });
   bot.use(mentionGate({ requireMentionInGroup: config.requireMention }));
   bot.use(contentSanitizer({ parseFaceTags: true }));
   // 同群不同人的事件逐条处理，禁止 merge 后丢失真正的发送者。
@@ -186,6 +220,8 @@ export async function startGateway(ctx, config, dependencies = {}) {
   bot.on('message', async mCtx => {
     const e = mCtx.state.companionEnvelope;
     e.signal.throwIfAborted();
+    const autonomyCommand = await autonomy.command(e);
+    if (autonomyCommand !== null) { await runtime.sendText(e, autonomyCommand, transport); return; }
     if (/^\/语音(?:\s|$)/u.test(e.text)) {
       try { await features.speak(e, e.text.replace(/^\/语音\s*/u, ''), e.signal); }
       catch { if (!e.signal.aborted) await runtime.sendText(e, `语音未发送成功，请检查本机语音服务；单次请控制在 ${config.voice.maxChars} 字内。`, transport); }
@@ -239,19 +275,33 @@ export async function startGateway(ctx, config, dependencies = {}) {
   });
   bot.on('ready', () => { runtime.store.observe('bot', 'connection', 'verified'); logger.info('companion: 官方 QQ 连接已就绪。'); });
   bot.on('error', () => { logger.error('companion: QQ 连接或 API 出错，请运行本地诊断。'); });
+  bot.on('rawEvent', raw => {
+    const names = { GROUP_MSG_REJECT: ['group', true], GROUP_DEL_ROBOT: ['group', true], GROUP_MSG_RECEIVE: ['group', false], C2C_MSG_REJECT: ['c2c', true], FRIEND_DEL: ['c2c', true], C2C_MSG_RECEIVE: ['c2c', false] };
+    const entry = names[raw.eventType]; if (!entry) return;
+    const [scope, blocked] = entry; const target = scope === 'group' ? raw.data?.group_openid : raw.data?.openid;
+    if (!config.access[`${scope}Allow`].includes(target)) return;
+    autonomyStore.block(scope, target, blocked ? 'PLATFORM_REJECTED' : '');
+    if (blocked) autonomy.operation?.abort(new Error('PLATFORM_REJECTED'));
+  });
   let closing;
   const close = () => closing ??= (async () => {
     stopping = true; bot.stop();
+    clearInterval(autonomyTimer); clearTimeout(autonomyStart);
     for (const turn of active.values()) turn.controller.abort(new Error('SHUTDOWN'));
+    await autonomy.close();
     await manager.disposeAll();
     await Promise.allSettled([...pending.values()]);
     await runtime.close();
+    autonomyStore.close();
   })();
   ctx.effect(() => {
     const clean = () => void cleanupMedia(mediaDir).catch(() => {});
     clean(); const timer = setInterval(clean, 3600000); timer.unref?.();
     return () => clearInterval(timer);
   }, 'companion.media-cleanup');
+  const autoTick = () => { if (!stopping) void autonomy.run().catch(() => logger.warn('companion: 自主活动本轮失败，未自动重试发送。')); };
+  const autonomyTimer = setInterval(autoTick, 60000); autonomyTimer.unref?.();
+  const autonomyStart = setTimeout(autoTick, 20000); autonomyStart.unref?.();
   ctx.effect(() => { void bot.start().catch(() => logger.error('companion: QQ 启动失败。')); return close; }, 'companion.gateway');
-  return { runtime, bot, manager, close };
+  return { runtime, bot, manager, autonomy, close };
 }

@@ -41,9 +41,10 @@ export async function readBilibili(input, signal) {
   return result;
 }
 
-export async function browseBilibili(signal) {
-  const data = await api('/x/web-interface/popular?ps=5&pn=1', signal);
-  return (data.list ?? []).slice(0, 5).map(v => ({ bvid: v.bvid, title: v.title, author: v.owner?.name, durationSeconds: v.duration, url: `https://www.bilibili.com/video/${v.bvid}/` }));
+export async function browseBilibili(signal, maximum = 5) {
+  const count = Math.max(1, Math.min(20, Math.floor(maximum)));
+  const data = await api(`/x/web-interface/popular?ps=${count}&pn=1`, signal);
+  return (data.list ?? []).slice(0, count).map(v => ({ bvid: v.bvid, title: String(v.title ?? ''), author: v.owner?.name, durationSeconds: v.duration, url: `https://www.bilibili.com/video/${v.bvid}/` }));
 }
 
 export async function downloadPublicBilibili(input, { directory, maxSeconds, maxBytes }, signal) {

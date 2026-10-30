@@ -1,7 +1,7 @@
 import { realpathSync } from 'node:fs';
 import { synthesizeVoice } from './voice.js';
 import { videoFrames } from './video.js';
-import { readBilibili, browseBilibili, downloadPublicBilibili } from './bilibili.js';
+import { readBilibili, browseBilibili, downloadPublicBilibili, bilibiliId } from './bilibili.js';
 import { generateSong } from './singing.js';
 
 export function textTool(name, description, properties, required, execute) {
@@ -10,7 +10,7 @@ export function textTool(name, description, properties, required, execute) {
       render: (_args, value) => [{ type: 'text', text: value.text }] }, execute };
 }
 
-export function registerFeatures({ ctx, runtime, config, directory, transport, files, vision, register }) {
+export function registerFeatures({ ctx, runtime, config, directory, transport, files, vision, register, observeVideo }) {
   const context = exec => {
     const e = runtime.contexts.get(exec.agent);
     if (!e) throw new Error('工具只能用于当前 QQ 消息。');
@@ -73,6 +73,7 @@ export function registerFeatures({ ctx, runtime, config, directory, transport, f
         if (!config.video.enabled || !vision) throw new Error('视频抽帧和视觉模型尚未启用。');
         const video = await downloadPublicBilibili(args.video, { directory, maxSeconds: config.video.maxSeconds, maxBytes: Math.min(25 * 1024 * 1024, config.media.maxMB * 1024 * 1024) }, bounded);
         result = { title: video.title, url: video.url, ...await describeVideo(video.localPath, undefined, exec, e, bounded) };
+        observeVideo?.({ bvid: bilibiliId(args.video), title: video.title }, result);
       } else result = args.action === 'browse' ? await browseBilibili(bounded) : await readBilibili(args.video, bounded);
       bounded.throwIfAborted(); return { text: JSON.stringify(result) };
     }));

@@ -2,7 +2,7 @@
 
 专门服务于 QQ 官方机器人的 DeepSeek Harness 插件。默认是自然、温和的朋友，不固定名字。使用官方 AppID/AppSecret，不登录个人 QQ，不依赖 OneBot。
 
-当前为 **0.2.0-alpha.4 预览版**，面向 DSH **0.2.1-rc.2**、Node.js **>=22.13**。安装时默认关闭，配置并停用旧 QQ 接入后启用。不是腾讯或 DeepSeek 官方产品。
+当前为 **0.3.0-alpha.1 预览版**，面向 DSH **0.2.1-rc.2**、Node.js **>=22.13**。安装时默认关闭，配置并停用旧 QQ 接入后启用。不是腾讯或 DeepSeek 官方产品。
 
 ## 能力与验证范围
 
@@ -17,8 +17,10 @@
 | 语音 | 本机 WAV 转 QQ SILK 后发送；QQ 私聊接收和播放已验证 |
 | B站 | 热门、BV 标题/简介、公开字幕、公开短视频画面抽样；限 180 秒/25 MB、无需登录付费的单段 MP4。QQ 画面描述已获用户确认 |
 | 唱歌 | 本机 ACE-Step.cpp 音乐规划模型生成音频编码，再合成原创中文短歌并转 SILK 发送；默认 30 秒。RX 6800 XT 约 16 秒生成 29 秒样本；用户已确认新版 QQ 语音能正常播放、听清唱词 |
+| 自主浏览 | 后台从公开热门列表挑选未看过的短视频，抽帧、记录所见和感想；每两小时一次、每天最多七次尝试；记录可供以后聊天引用 |
+| 主动聊天 | 独立官方主动消息，不借用旧消息 ID；按时区、安静时段、间隔、每日预算和平台权限决定是否发送。默认关闭，管理员配置后启用 |
 
-持续自主刷视频、完整音视频理解、主动消息授权与调度尚未完成。当前是收到消息后回应的预览版本，唱歌限短片段。
+自主浏览限公开短视频画面抽样，不登录 B站账号，不点赞、评论或关注；完整音视频理解尚未完成，唱歌限短片段。自主活动依赖宿主持续运行，不会在电脑关机时工作。
 
 ## 安装与更新
 
@@ -48,7 +50,7 @@ https://raw.githubusercontent.com/sidifeng/dsh-companion/market-index/index.json
 
 每版固定指向完整 Git 提交 SHA。保留这个索引来源，新版发布后刷新市场并选择新版更新。数据库放在独立数据目录，不随代码更新覆盖。
 
-维护者修改代码后，提高 `package.json` 和锁文件中的版本号（例如 `npm version 0.2.0-alpha.5 --no-git-tag-version`），更新 `RELEASE_NOTES.md`，提交并推送 `main`。Actions 在 Windows/Linux 检查通过后自动更新 `market-index` 分支并创建预览 Release。只上传代码、不提高版本号，不会覆盖已经发布的版本。工作流使用 GitHub 短期令牌，无需上传 QQ 密钥。
+维护者修改代码后，提高 `package.json` 和锁文件中的版本号（例如 `npm version 0.3.0-alpha.2 --no-git-tag-version`），更新 `RELEASE_NOTES.md`，提交并推送 `main`。Actions 在 Windows/Linux 检查通过后自动更新 `market-index` 分支并创建预览 Release。只上传代码、不提高版本号，不会覆盖已经发布的版本。工作流使用 GitHub 短期令牌，无需上传 QQ 密钥。
 
 ## 配置
 
@@ -89,6 +91,37 @@ singing:
 
 语音是独立的本机服务，不随插件打包。兼容接口：`POST /v1/speak/file` 接收 `{text,voice,format:"wav",sr:24000,cache:true}`，返回 WAV 字节。只接受 loopback 地址；服务未启动时如实报错。单段最多 60 秒。视频需要另装 FFmpeg 或填写可执行文件绝对路径。
 
+### 自主聊天与浏览
+
+以下是仅向白名单群主动发言的示例；启用前填写管理员的官方私聊 OpenID。私聊主动发送默认关闭，也不能用聊天命令打开。
+
+```yaml
+autonomy:
+  enabled: true
+  groupEnabled: true
+  privateEnabled: false
+  browseEnabled: true
+  operatorIds: [] # 填本机管理员的官方私聊 OpenID，不填数字 QQ 号
+  timezone: Asia/Shanghai
+  quietStart: 23
+  quietEnd: 9
+  chatIntervalMinutes: 30
+  groupDaily: 28
+  privateDaily: 0
+  idleMinutes: 3
+  browseIntervalMinutes: 120
+  browseDaily: 7
+  interests: 猫、生活、科普、音乐
+```
+
+每半小时提供一次群主动聊天机会，最多一条短消息；群内三分钟内有消息、正在回复、没有新话题或处于安静时段时跳过。没有新视频时可聊普通兴趣话题；有值得分享的真实画面记录时可分享该经历，并附 BV 号。群主动生成不读取任何人的私聊记忆。最近主动消息会进入该群的聊天上下文，用户追问时能接上。
+
+浏览每两小时挑选一个未看过且符合时长限制的视频，下载成功并经视觉模型观察后才记录所见。每天最多七次尝试，包括失败；手动测试也计入每日浏览预算。点播看过的视频同样参与去重。历史版本未建立统一浏览记录，不自动猜测或重建旧观看历史。
+
+主动发送使用 QQ 官方不带 `msg_id` 的消息接口。先查询群内 `allow_proactive_msg`；接口不可用时以真实发送结果为准，平台拒收或群内关闭主动推送后会暂停该目标，管理员处理后再用 `/群主动 开` 恢复。具体权限与额度以 [官方群消息文档](https://bot.q.qq.com/wiki/develop/api-v2/autogen/api/v2_groups_group_openid_messages.post.html)、[单聊消息文档](https://bot.q.qq.com/wiki/develop/api-v2/autogen/api/v2_users_user_openid_messages.post.html) 为准。发送不确定不重试，也不会伪装成被动回复或绕过群开关。
+
+`autonomy.sqlite` 单独保存公开浏览经历、目标活动时间、开关和主动发送账本。限额和间隔在调用前持久化；重启不重发未确认消息，不补发停机期间积压。关闭开关会取消生成，但已经提交网络的消息无法撤回。后台模型调用使用当前 DeepSeek/视觉服务，不属于免费离线模型。
+
 ### 本地唱歌服务
 
 使用 [ACE-Step.cpp](https://github.com/ServeurpersoCom/acestep.cpp) 的 Vulkan 后端；本机验证版本为 `de858d8 (2026-10-16)`。按上游 README 获取 Windows 程序及 Vulkan/CPU DLL，在独立模型目录放入 [GGUF 模型](https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/tree/main)中的 `Qwen3-Embedding-0.6B-Q8_0.gguf`、`acestep-v15-turbo-Q8_0.gguf`、`vae-BF16.gguf`、`acestep-5Hz-lm-0.6B-Q8_0.gguf`，共约 4.38 GB。下载后对照模型仓库 SHA256 校验。歌词由 DeepSeek 创作；本机 `/lm` 负责生成音乐音频编码，随后 `/synth` 合成声音。alpha.3 只用直接扩散，实测出现伴奏或无词哼唱；升级后需补充 LM 文件，不能把能播放音频视为唱词已通过。
@@ -111,6 +144,9 @@ singing:
 - `/唱歌 给我唱一段关于晚风和星光的原创短歌`：启用本地引擎后生成短歌。
 - `/回传附件`：回传本轮图片/视频，用于权限验收。
 - `/取消`：取消本人正在处理的任务；已发出的消息不能撤回。
+- `/自主动态`：查看最近的公开浏览记录和感想。
+- 管理员私聊：`/自主状态`、`/自主浏览 开或关`、`/群主动 开或关`。
+- 管理员私聊：`/刷B站一次`（跳过两小时间隔，仍计入每日预算）、`/主动试聊`（仍遵守安静时段和主动发送预算）。
 
 也可自然地请求看图、描述短视频、发语音或读取 B站公开资料。
 
@@ -119,6 +155,8 @@ singing:
 按 AppID、场景、目标和发送者隔离记忆与模型上下文。自动整理每轮额外调用一次 DeepSeek，最多 5 条事实，要求当前原文证据、本人归属和较高置信度；仍可能误记，可查看、更正和删除。不把模型回复当作用户经历。检索在权限过滤后，从最多 400 条近期候选选出 6 条。
 
 关系状态只控制表达，不奖励隐私披露。自动记忆开启时每 24 次已整理交流换一段上下文，靠长期记忆延续资料；关闭后不产生新事实和关系评分。
+
+目前关系状态是简单的熟悉度与情绪惯性；尚无经长期验证的关系学习、跨场景身份确认或大规模语义记忆检索。自主经历能增加聊天连续性，但不代表具有意识或真人式情感。群内非 @ 消息只用于记录最近活动时间、避免打断，不自动提取全群话题或成员资料。
 
 默认目录为 `$DSH_HOME/companion/<AppID哈希>/memory.sqlite`，未设置 DSH_HOME 时用 `~/.dsh`。Schema 1 升级至 2 前自动创建一致性备份；旧代码不能直接读取更高 schema，回退需停止宿主并恢复对应备份。
 
