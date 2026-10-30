@@ -5,13 +5,31 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Config } from '../src/config.js';
 import { AutonomyStore } from '../src/autonomy-store.js';
-import { AutonomyEngine, isQuiet, localClock, proactiveDraft, analyzeExperience } from '../src/autonomy.js';
+import { AutonomyEngine, isQuiet, localClock, proactiveDraft, analyzeExperience, structuredAutonomy } from '../src/autonomy.js';
 
 const at = text => Date.parse(`2026-10-30T${text}+08:00`);
 const cfg = () => Config({ appId: 'BOT', access: { groupMode: 'allowlist', groupAllow: ['GROUP'], c2cMode: 'allowlist', c2cAllow: ['OWNER'] },
   autonomy: { enabled: true, groupEnabled: true, privateEnabled: false, browseEnabled: true, operatorIds: ['OWNER'] } });
 const video = n => ({ bvid: `BV${String(n).padStart(10, '0')}`, title: `猫的日常 ${n}`, durationSeconds: 45 });
 const inspected = { analysis: { summary: '猫钻进纸箱。', reaction: '这个小动作很好笑。', shareworthy: true }, evidence: { frames: [{ seconds: 10, text: '猫在纸箱中' }], limitation: '抽帧，没有音轨' } };
+test('真实整理结果截断或 JSON 不完整时只重试一次，完整结构才接受', async () => {
+  for (const first of ['max-tokens', 'stop']) {
+    const budgets = [];
+    const llm = { async *stream(options) {
+      budgets.push(options.maxTokens);
+      yield { type: 'text-delta', index: 0, text: budgets.length === 1 ? '{"summary":"未完成' : JSON.stringify(inspected.analysis) };
+      yield { type: 'finish', reason: { kind: budgets.length === 1 ? first : 'stop' } };
+    } };
+    assert.deepEqual(await structuredAutonomy(llm, {}, '整理实际画面', { validate: analyzeExperience }), inspected.analysis);
+    assert.deepEqual(budgets, [2400, 4800]);
+  }
+  let calls = 0;
+  const broken = { async *stream() { calls++; yield { type: 'text-delta', index: 0, text: '{}' }; yield { type: 'finish', reason: { kind: 'max-tokens' } }; } };
+  await assert.rejects(structuredAutonomy(broken, {}, 'test'), /TRUNCATED/u); assert.equal(calls, 2);
+  const controller = new AbortController();
+  const cancelled = { async *stream() { controller.abort(); yield { type: 'text-delta', index: 0, text: '{' }; } };
+  await assert.rejects(structuredAutonomy(cancelled, {}, 'test', { signal: controller.signal }));
+});
 function setup(t, changes = {}) {
   const store = new AutonomyStore(':memory:', 'BOT'); const sent = []; let now = at('10:00:00');
   const engine = new AutonomyEngine({ config: cfg(), store,

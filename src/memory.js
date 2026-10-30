@@ -6,6 +6,7 @@ export async function completeText(llm, config, text, { signal, maxTokens = 700 
     messages: [createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'plugin', plugin: 'dsh-companion' } })],
     maxTokens, signal })) assembler.push(chunk);
   if (['error', 'aborted'].includes(assembler.finish?.kind)) throw new Error('MODEL_AUXILIARY_FAILED');
+  if (assembler.finish?.kind === 'max-tokens') throw new Error('MODEL_AUXILIARY_TRUNCATED');
   return assembler.blocks().filter(b => b.type === 'text').map(b => b.text).join('').trim();
 }
 

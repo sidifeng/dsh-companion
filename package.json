@@ -1,6 +1,6 @@
 {
   "name": "dsh-companion",
-  "version": "0.3.0-alpha.1",
+  "version": "0.3.0-alpha.2",
   "description": "QQ 官方机器人：DeepSeek 对话、人物记忆、图片、视频抽帧与本地语音",
   "type": "module",
   "main": "./src/index.js",
