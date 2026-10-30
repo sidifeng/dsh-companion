@@ -27,6 +27,16 @@ export const Config = Schema.intersect([
       maxSeconds: Schema.number().min(1).max(600).default(180),
     }).default({}),
     bilibili: Schema.object({ enabled: Schema.boolean().default(true) }).default({}),
+    semantic: Schema.object({
+      enabled: Schema.boolean().default(false).description('准备本地语义模型后启用；推理不联网'),
+      modelDir: Schema.string().default('').description('固定版本语义模型缓存；默认在 dataDir/models'),
+      minSimilarity: Schema.number().min(0).max(1).default(0.38),
+    }).default({}),
+    dialogue: Schema.object({
+      enabled: Schema.boolean().default(true),
+      retentionHours: Schema.number().min(1).max(72).default(24),
+      maxMessages: Schema.number().min(20).max(200).step(1).default(120),
+    }).default({}),
     autonomy: Schema.object({
       enabled: Schema.boolean().default(false),
       groupEnabled: Schema.boolean().default(false),

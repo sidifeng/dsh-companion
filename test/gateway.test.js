@@ -65,9 +65,14 @@ test('真实腾讯 SessionManager/入站处理 + 模拟 QQ 与模型，群内不
   await bot.receive(message('ask', '重放')); assert.equal(bot.sent.length, 3);
   await bot.receive(message('other', '你好', { senderId: 'UNLISTED' })); assert.equal(bot.sent.length, 3);
   const group = { kind: 'group', groupOpenid: 'GROUP', rawEventType: 'GROUP_AT_MESSAGE_CREATE' };
+  const beforeListen = bot.sent.length;
+  await bot.receive(message('group-talk1', '北门那条路正在维修', { ...group, rawEventType: 'GROUP_MESSAGE_CREATE' }));
+  await bot.receive(message('group-talk2', '那我们改从南门进去', { ...group, rawEventType: 'GROUP_MESSAGE_CREATE', senderId: 'B' }));
+  assert.equal(bot.sent.length, beforeListen, '理解非@消息不立即插话');
   await Promise.all([bot.receive(message('g1', 'A 的问题', group)), bot.receive(message('g2', 'B 的问题', { ...group, senderId: 'B' }))]);
   assert.equal(prompts.length, 3);
   assert.doesNotMatch(JSON.stringify(prompts.slice(1)), /橘猫/u);
+  assert.match(prompts[1].prompt.variables.companion_group, /南门/u);
   assert.deepEqual(bot.sent.slice(3).map(x => x.target.msgId), ['g1', 'g1', 'g2', 'g2']);
   assert.equal(gateway.manager.size, 3, '同群不同人的模型历史也隔离');
   const privateRecord = [...gateway.manager.sessions.values()].find(r => r.scope === 'c2c');

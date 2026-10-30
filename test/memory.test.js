@@ -50,9 +50,9 @@ test('schema 1 升级保留旧记忆，并产生可单独打开的升级前备�
   const directory = mkdtempSync(join(tmpdir(), 'companion-migration-')); const file = join(directory, 'memory.sqlite');
   t.after(() => { assert.ok(directory.startsWith(join(tmpdir(), 'companion-migration-'))); rmSync(directory, { recursive: true, force: true }); });
   const first = new MemoryStore(file); first.remember(event(), '旧记忆');
-  first.db.exec('DROP TABLE facts; DROP TABLE fact_history; DROP TABLE profiles; DROP TABLE analyzed; PRAGMA user_version=1;'); first.close();
+  first.db.exec('DROP TABLE facts; DROP TABLE fact_history; DROP TABLE profiles; DROP TABLE analyzed; DROP TABLE episodes; DROP TABLE semantic_vectors; PRAGMA user_version=1;'); first.close();
   const upgraded = new MemoryStore(file); assert.equal(upgraded.recall(event())[0].text, '旧记忆');
-  assert.equal(upgraded.db.prepare('PRAGMA user_version').get().user_version, 2); upgraded.close();
+  assert.equal(upgraded.db.prepare('PRAGMA user_version').get().user_version, 3); upgraded.close();
   const backup = new DatabaseSync(join(directory, readdirSync(directory).find(x => x.includes('.before-v2-'))), { readOnly: true });
   assert.equal(backup.prepare('PRAGMA user_version').get().user_version, 1);
   assert.equal(backup.prepare('SELECT text FROM memories').get().text, '旧记忆'); backup.close();

@@ -5,13 +5,15 @@ import { homedir } from 'node:os';
 import { loadUpstream } from './upstream.js';
 import { CompanionRuntime } from './runtime.js';
 import { admits, validateLiveConfig } from './config.js';
-import { conversation, partition, opaqueId } from './identity.js';
+import { conversation, partition, opaqueId, envelope } from './identity.js';
 import { attachmentMiddleware } from './media.js';
 import { consolidateMemory } from './memory.js';
 import { registerFeatures } from './features.js';
 import { cleanupMedia } from './video.js';
 import { AutonomyStore } from './autonomy-store.js';
 import { AutonomyEngine, createAutonomyTasks } from './autonomy.js';
+import { DialogueStore, DialogueContext } from './dialogue.js';
+import { LocalEmbedder, SemanticMemory } from './semantic.js';
 
 export function createTransport(bot, store) {
   return async (message, target) => {
@@ -103,6 +105,21 @@ export async function startGateway(ctx, config, dependencies = {}) {
     }
   }
   const manager = new CompanionSessions(ctx, ctx.agents, { ...config, preset: undefined }, safeLogger);
+  const dialogueStore = new DialogueStore(join(dataDir, 'dialogue.sqlite'), config.dialogue);
+  const dialogue = new DialogueContext(dialogueStore, () => ctx.get('llm'), () => manager.getEffectiveModel('group', 'dialogue'), Date.now, runtime.store);
+  if (config.dialogue.enabled) runtime.dialogue = dialogue;
+  const embedder = config.semantic.enabled ? (dependencies.embedder ?? new LocalEmbedder(config.semantic.modelDir || join(dataDir, 'models'))) : undefined;
+  if (embedder) { runtime.semantic = new SemanticMemory(runtime.store, embedder, config.semantic); void embedder.start?.().catch(() => logger.warn('companion: 本机语义模型尚未就绪，暂用文字匹配；可查看 /记忆状态。')); }
+  const indexingStop = new AbortController(); let indexing; let ownerCursor = 0;
+  const indexTick = () => {
+    if (!runtime.semantic || indexing || stopping || queued.size || embedder.status === 'unavailable') return;
+    const owners = runtime.store.memoryOwners().filter(([app, scope, target]) => app === config.appId && config.access[`${scope}Allow`]?.includes(target));
+    if (!owners.length) return;
+    const [appId, scope, targetId, senderId] = owners[ownerCursor++ % owners.length];
+    indexing = runtime.semantic.index({ appId, scope, targetId, senderId, signal: indexingStop.signal }).catch(() => {}).finally(() => { indexing = undefined; });
+  };
+  const indexingTimer = setInterval(indexTick, 60000); indexingTimer.unref?.();
+  const indexingStart = setTimeout(indexTick, 10000); indexingStart.unref?.();
   const autonomyStore = new AutonomyStore(join(dataDir, 'autonomy.sqlite'), config.appId);
   observeVideo = (video, evidence) => {
     try {
@@ -111,6 +128,7 @@ export async function startGateway(ctx, config, dependencies = {}) {
     } catch { logger.warn('companion: 本次点播浏览记录未保存。'); }
   };
   const autonomy = new AutonomyEngine({ config, store: autonomyStore, memory: runtime.store,
+    dialogue: config.dialogue.enabled ? dialogue : undefined,
     tasks: dependencies.autonomyTasks ?? createAutonomyTasks({ ctx, config, vision, directory: mediaDir, route: () => manager.getEffectiveModel('group', 'autonomy') }),
     busy: (scope, targetId) => (queued.get(conversation({ appId: config.appId, scope, targetId })) ?? 0) > 0,
     permission: async (target, signal) => {
@@ -156,6 +174,9 @@ export async function startGateway(ctx, config, dependencies = {}) {
   bot.use(async (mCtx, next) => {
     const m = mCtx.message;
     autonomy.noteActivity(m.kind, m.kind === 'group' ? m.groupOpenid : m.senderId);
+    if (config.dialogue.enabled && m.kind === 'group' && !m.senderIsBot) {
+      try { const e = envelope(config.appId, m); if (runtime.store.profile(e).auto_memory) dialogueStore.observe(e); } catch { /* 格式不完整的群消息不进入上下文。 */ }
+    }
     await next();
   });
   bot.use(mentionGate({ requireMentionInGroup: config.requireMention }));
@@ -222,6 +243,29 @@ export async function startGateway(ctx, config, dependencies = {}) {
     e.signal.throwIfAborted();
     const autonomyCommand = await autonomy.command(e);
     if (autonomyCommand !== null) { await runtime.sendText(e, autonomyCommand, transport); return; }
+    if (/^\/找记忆\s+/u.test(e.text)) {
+      const query = e.text.replace(/^\/找记忆\s+/u, '');
+      const rows = runtime.semantic ? await runtime.semantic.recall(e, query) : runtime.store.recall(e, query).filter(r => r.score > 0);
+      await runtime.sendText(e, rows.length ? rows.map(r => `${r.id}：${r.text}`).join('\n') : '没有找到足够相关的已保存记忆。', transport); return;
+    }
+    if (e.text.trim() === '/记忆状态') {
+      await runtime.sendText(e, `语义检索：${embedder?.status === 'ready' && runtime.semantic?.mode !== 'fallback' ? '本机模型已就绪' : config.semantic.enabled ? '暂用文字匹配，本机模型需检查' : '未启用'}。当前聊天有 ${runtime.store.memoryRows(e).length} 条已保存资料。`, transport); return;
+    }
+    if (/^\/群话题(?:\s|$)/u.test(e.text)) {
+      const administrator = e.scope === 'c2c' && config.autonomy.operatorIds.includes(e.senderId);
+      if (!config.dialogue.enabled) { await runtime.sendText(e, '群话题理解未启用。', transport); return; }
+      const target = e.scope === 'group' ? e : administrator && config.access.groupAllow.length === 1 ? { ...e, scope: 'group', targetId: config.access.groupAllow[0] } : undefined;
+      if (!target) { await runtime.sendText(e, '请在目标群 @我 查看话题；只有管理员可在私聊中调整。', transport); return; }
+      const action = e.text.trim().split(/\s/u)[1];
+      if (['开', '关', '清空'].includes(action)) {
+        if (!administrator) { await runtime.sendText(e, '群话题设置由管理员在私聊调整。', transport); return; }
+        if (action === '清空') dialogueStore.clear(target); else dialogueStore.setEnabled(target, action === '开');
+        await runtime.sendText(e, action === '清空' ? '已清空测试群的近期话题上下文。' : `群话题理解已${action === '开' ? '开启' : '关闭并清空' }。`, transport); return;
+      }
+      const context = await dialogue.prepare(target);
+      let summary; try { summary = JSON.parse(context?.summary || '{}').summary; } catch { /* 无摘要 */ }
+      await runtime.sendText(e, summary || (context?.messages.length ? '已收到近期群消息，话题摘要暂未整理好。正常聊天仍会参考这些消息。' : '还没有收到可用的近期群话题。'), transport); return;
+    }
     if (/^\/语音(?:\s|$)/u.test(e.text)) {
       try { await features.speak(e, e.text.replace(/^\/语音\s*/u, ''), e.signal); }
       catch { if (!e.signal.aborted) await runtime.sendText(e, `语音未发送成功，请检查本机语音服务；单次请控制在 ${config.voice.maxChars} 字内。`, transport); }
@@ -240,6 +284,7 @@ export async function startGateway(ctx, config, dependencies = {}) {
     let command;
     try { command = runtime.command(e); } catch { command = '记忆内容需要 1～2000 字，请缩短后重试。'; }
     if (command !== null) { await runtime.sendText(e, command, transport); return; }
+    await runtime.prepare(e);
     let currentAgent;
     const facade = { async getOrCreate(...args) {
       e.signal.throwIfAborted(); args[1] = peerKey(e);
@@ -287,21 +332,23 @@ export async function startGateway(ctx, config, dependencies = {}) {
   const close = () => closing ??= (async () => {
     stopping = true; bot.stop();
     clearInterval(autonomyTimer); clearTimeout(autonomyStart);
+    clearInterval(indexingTimer); clearTimeout(indexingStart); indexingStop.abort(); await indexing;
     for (const turn of active.values()) turn.controller.abort(new Error('SHUTDOWN'));
     await autonomy.close();
     await manager.disposeAll();
     await Promise.allSettled([...pending.values()]);
     await runtime.close();
+    await Promise.allSettled([...dialogue.pending.values()]); dialogueStore.close(); await embedder?.close();
     autonomyStore.close();
   })();
   ctx.effect(() => {
     const clean = () => void cleanupMedia(mediaDir).catch(() => {});
-    clean(); const timer = setInterval(clean, 3600000); timer.unref?.();
+    clean(); const timer = setInterval(() => { clean(); dialogueStore.prune(); }, 3600000); timer.unref?.();
     return () => clearInterval(timer);
   }, 'companion.media-cleanup');
   const autoTick = () => { if (!stopping) void autonomy.run().catch(() => logger.warn('companion: 自主活动本轮失败，未自动重试发送。')); };
   const autonomyTimer = setInterval(autoTick, 60000); autonomyTimer.unref?.();
   const autonomyStart = setTimeout(autoTick, 20000); autonomyStart.unref?.();
   ctx.effect(() => { void bot.start().catch(() => logger.error('companion: QQ 启动失败。')); return close; }, 'companion.gateway');
-  return { runtime, bot, manager, autonomy, close };
+  return { runtime, bot, manager, autonomy, dialogue, close };
 }

@@ -137,6 +137,23 @@ test('分享只接受严格结构，重复话题跳过，链接和群@由程序�
   assert.throws(() => proactiveDraft({ send: true, text: 'https://bad.test', topic: 'x' }, [], null));
   assert.equal(proactiveDraft({ send: false }, [], null), null);
   assert.equal(proactiveDraft({ send: true, text: '换句话重复说', topic: '旧话题' }, [{ text: '旧内容', topic: '旧话题' }]), null);
+  assert.equal(proactiveDraft({ send: true, text: '接着聊刚才的路线', topic: '路线', source: 'group' }, [], video(1)).bvid, '');
+});
+
+test('群主动接续公开话题或共同计划，回访占用原预算且取消后不发', async t => {
+  let claimed = 0;
+  const { engine, sent, setTime } = setup(t, {
+    dialogue: { async prepare() { return { summary: '大家聊周末骑行路线' }; } },
+    memory: { dueGroupFollowup() { return { id: 'E1', text: '大家周末骑行', evidence: '我们周末去骑行', owner: { scope: 'group' } }; },
+      claimFollowup(_owner, id) { assert.equal(id, 'E1'); return ++claimed === 1; } },
+  });
+  engine.tasks.draft = async data => {
+    assert.match(data.groupContext.summary, /骑行/u); assert.equal(data.memories, undefined);
+    return { send: true, text: `之前讨论的骑行后来定下来了吗${claimed || ''}？`, topic: `骑行${claimed}`, source: 'followup', followupId: 'E1' };
+  };
+  await engine.run({ browse: false }); assert.equal(sent.length, 1);
+  await engine.run({ browse: false }); assert.equal(sent.length, 1);
+  setTime(at('11:00:00')); await engine.run({ browse: false }); assert.equal(sent.length, 1);
 });
 
 test('手动浏览继承本轮取消信号，取消后不保存迟到经历，也不接着主动发言', async t => {

@@ -9,7 +9,7 @@ export class MemoryStore {
     this.db = new DatabaseSync(file);
     this.db.exec('PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;');
     const version = this.db.prepare('PRAGMA user_version').get().user_version;
-    if (version > 2) { this.db.close(); throw new Error('数据库版本比插件新；请恢复匹配版本，未修改数据。'); }
+    if (version > 3) { this.db.close(); throw new Error('数据库版本比插件新；请恢复匹配版本，未修改数据。'); }
     if (version === 0) this.db.exec(`
       BEGIN IMMEDIATE;
       CREATE TABLE memories (
@@ -39,6 +39,19 @@ export class MemoryStore {
         CREATE TABLE analyzed (event_key TEXT PRIMARY KEY);
         PRAGMA user_version=2; COMMIT;`);
     }
+    if (version < 3) {
+      if (version > 0 && file !== ':memory:') this.db.exec(`VACUUM INTO '${String(file + '.before-v3-' + Date.now()).replaceAll("'", "''")}'`);
+      this.db.exec(`BEGIN IMMEDIATE;
+        ALTER TABLE profiles ADD COLUMN followups INTEGER NOT NULL DEFAULT 1;
+        CREATE TABLE episodes (id INTEGER PRIMARY KEY, owner TEXT NOT NULL, source_event TEXT NOT NULL,
+          text TEXT NOT NULL, evidence TEXT NOT NULL, due_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
+          audience TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open', asked_at INTEGER NOT NULL DEFAULT 0,
+          created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE(owner,source_event));
+        CREATE INDEX episodes_owner ON episodes(owner,status,due_at);
+        CREATE TABLE semantic_vectors (owner TEXT NOT NULL, memory_id TEXT NOT NULL, source_hash TEXT NOT NULL,
+          model TEXT NOT NULL, vectors TEXT NOT NULL, PRIMARY KEY(owner,memory_id,model));
+        PRAGMA user_version=3; COMMIT;`);
+    }
   }
   claim(e) {
     return this.db.prepare('INSERT OR IGNORE INTO inbound VALUES (?, ?, ?)')
@@ -57,11 +70,25 @@ export class MemoryStore {
     const rows = this.db.prepare("SELECT 'M'||id AS id,text,created_at FROM memories WHERE owner=? ORDER BY created_at DESC,id DESC LIMIT 200")
       .all(partition(e));
     rows.push(...this.db.prepare("SELECT 'F'||id AS id,value AS text,updated_at AS created_at,slot,confidence FROM facts WHERE owner=? ORDER BY updated_at DESC LIMIT 200").all(partition(e)));
+    rows.push(...this.db.prepare("SELECT 'E'||id AS id,text,created_at,status FROM episodes WHERE owner=? ORDER BY updated_at DESC LIMIT 200").all(partition(e)));
     // P0 有界中文片段匹配，后续用中文全文/向量检索替换。
     const compact = query.replace(/\s/gu, '');
     const terms = [...new Set(Array.from(compact).slice(0, 100).flatMap((_, i) => compact.slice(i, i + 2).length === 2 ? [compact.slice(i, i + 2)] : []))];
     return rows.map(row => ({ ...row, score: terms.reduce((n, term) => n + Number(row.text.includes(term)), 0) }))
       .sort((a, b) => b.score - a.score || b.created_at - a.created_at || String(b.id).localeCompare(String(a.id))).slice(0, limit);
+  }
+  memoryRows(e) {
+    const owner = partition(e);
+    return [...this.db.prepare("SELECT 'M'||id AS id,text,created_at FROM memories WHERE owner=? ORDER BY created_at,id").all(owner),
+      ...this.db.prepare("SELECT 'F'||id AS id,value AS text,updated_at AS created_at,slot FROM facts WHERE owner=? ORDER BY updated_at,id").all(owner),
+      ...this.db.prepare("SELECT 'E'||id AS id,text,created_at,status FROM episodes WHERE owner=? ORDER BY created_at,id").all(owner)];
+  }
+  memoryOwners() { return this.db.prepare('SELECT owner FROM memories UNION SELECT owner FROM facts UNION SELECT owner FROM episodes').all().map(r => JSON.parse(r.owner)); }
+  vectorRows(e, model) { return this.db.prepare('SELECT * FROM semantic_vectors WHERE owner=? AND model=?').all(partition(e), model); }
+  saveVector(e, row, hash, model, vectors, epoch) {
+    if (this.profile(e).epoch !== epoch || !this.memoryRows(e).some(r => r.id === row.id && r.text === row.text && r.status === row.status)) return false;
+    this.db.prepare(`INSERT INTO semantic_vectors VALUES(?,?,?,?,?) ON CONFLICT(owner,memory_id,model)
+      DO UPDATE SET source_hash=excluded.source_hash,vectors=excluded.vectors`).run(partition(e), row.id, hash, model, JSON.stringify(vectors)); return true;
   }
   profile(e) {
     this.db.prepare('INSERT OR IGNORE INTO profiles(owner) VALUES(?)').run(partition(e));
@@ -74,20 +101,22 @@ export class MemoryStore {
     this.db.exec('BEGIN IMMEDIATE;');
     try {
       let count = 0;
-      for (const table of ['memories', 'facts', 'fact_history']) count += this.db.prepare(`DELETE FROM ${table} WHERE owner=?`).run(owner).changes;
+      for (const table of ['memories', 'facts', 'fact_history', 'episodes', 'semantic_vectors']) count += this.db.prepare(`DELETE FROM ${table} WHERE owner=?`).run(owner).changes;
       this.db.prepare("UPDATE profiles SET summary='',familiarity=0,mood=0,interactions=0,last_at=0,last_growth=0,epoch=epoch+1 WHERE owner=?").run(owner);
       this.db.exec('COMMIT;'); return count;
     } catch (error) { this.db.exec('ROLLBACK;'); throw error; }
   }
   editMemory(e, id, replacement) {
-    const match = /^([MF])(\d+)$/u.exec(id); if (!match) return false;
-    const table = match[1] === 'F' ? 'facts' : 'memories'; const field = table === 'facts' ? 'value' : 'text';
+    const match = /^([MFE])(\d+)$/u.exec(id); if (!match) return false;
+    const table = match[1] === 'F' ? 'facts' : match[1] === 'E' ? 'episodes' : 'memories';
     const owner = partition(e); const row = this.db.prepare(`SELECT * FROM ${table} WHERE owner=? AND id=?`).get(owner, Number(match[2]));
     if (!row) return false;
     if (replacement !== undefined && (!replacement.trim() || replacement.length > 2000)) throw new Error('记忆内容应为 1～2000 字。');
     if (replacement === undefined) this.db.prepare(`DELETE FROM ${table} WHERE owner=? AND id=?`).run(owner, row.id);
     else if (table === 'facts') this.db.prepare('UPDATE facts SET value=?,evidence=?,confidence=1,source_event=?,updated_at=? WHERE owner=? AND id=?').run(replacement, replacement, eventKey(e), e.receivedAt, owner, row.id);
+    else if (table === 'episodes') this.db.prepare("UPDATE episodes SET text=?,evidence=?,status='closed',updated_at=? WHERE owner=? AND id=?").run(replacement, replacement, e.receivedAt, owner, row.id);
     else this.db.prepare('UPDATE memories SET text=? WHERE owner=? AND id=?').run(replacement, owner, row.id);
+    this.db.prepare('DELETE FROM semantic_vectors WHERE owner=? AND memory_id=?').run(owner, id);
     if (table === 'facts') this.db.prepare('DELETE FROM fact_history WHERE owner=? AND fact_id=?').run(owner, row.id);
     this.profile(e); this.db.prepare("UPDATE profiles SET summary='',epoch=epoch+1 WHERE owner=?").run(owner);
     return true;
@@ -100,10 +129,15 @@ export class MemoryStore {
       if (!this.db.prepare('INSERT OR IGNORE INTO analyzed VALUES(?)').run(eventKey(e)).changes) { this.db.exec('ROLLBACK;'); return false; }
       for (const fact of analysis.facts) {
         const old = this.db.prepare('SELECT * FROM facts WHERE owner=? AND slot=?').get(owner, fact.slot);
+        if (old) this.db.prepare('DELETE FROM semantic_vectors WHERE owner=? AND memory_id=?').run(owner, `F${old.id}`);
         if (old && old.value !== fact.value) this.db.prepare('INSERT INTO fact_history VALUES(?,?,?,?)').run(owner, old.id, old.value, e.receivedAt);
         this.db.prepare(`INSERT INTO facts(owner,slot,value,evidence,confidence,source_event,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)
           ON CONFLICT(owner,slot) DO UPDATE SET value=excluded.value,evidence=excluded.evidence,confidence=excluded.confidence,source_event=excluded.source_event,updated_at=excluded.updated_at`)
           .run(owner, fact.slot, fact.value, fact.evidence, fact.confidence, eventKey(e), e.receivedAt, e.receivedAt);
+      }
+      for (const resolution of analysis.resolutions ?? []) this.closeFollowup(e, resolution.id, resolution.status);
+      for (const plan of analysis.followups ?? []) {
+        this.saveFollowup(e, plan, epoch);
       }
       const elapsed = Math.max(0, e.receivedAt - current.last_at);
       const neutralized = current.mood * Math.pow(0.5, elapsed / 14_400_000);
@@ -115,6 +149,41 @@ export class MemoryStore {
         .run(summary, Math.min(100, current.familiarity + Number(grow)), mood, Math.max(current.last_at, e.receivedAt), grow ? e.receivedAt : current.last_growth, owner);
       this.db.exec('COMMIT;'); return true;
     } catch (error) { this.db.exec('ROLLBACK;'); throw error; }
+  }
+  setFollowups(e, enabled) { this.profile(e); this.db.prepare('UPDATE profiles SET followups=?,epoch=epoch+1 WHERE owner=?').run(Number(enabled), partition(e)); }
+  saveFollowup(e, plan, epoch) {
+    const p = this.profile(e); const owner = partition(e);
+    if (!p.auto_memory || !p.followups || p.epoch !== epoch || this.db.prepare("SELECT 1 FROM episodes WHERE owner=? AND text=? AND status='open'").get(owner, plan.text)) return false;
+    return this.db.prepare(`INSERT OR IGNORE INTO episodes(owner,source_event,text,evidence,due_at,expires_at,audience,created_at,updated_at)
+      VALUES(?,?,?,?,?,?,?,?,?)`).run(owner, eventKey(e), plan.text, plan.evidence, plan.dueAt, plan.expiresAt, plan.audience, e.receivedAt, e.receivedAt).changes > 0;
+  }
+  groupPlans(appId, targetId) {
+    return this.db.prepare("SELECT 'E'||id AS id,owner,text FROM episodes WHERE json_extract(owner,'$[0]')=? AND json_extract(owner,'$[1]')='group' AND json_extract(owner,'$[2]')=? AND audience='group' AND status='open' ORDER BY id DESC LIMIT 20").all(appId, targetId);
+  }
+  plans(e) { return this.db.prepare("SELECT 'E'||id AS id,text,evidence,due_at,expires_at,status,asked_at,audience FROM episodes WHERE owner=? ORDER BY updated_at DESC LIMIT 20").all(partition(e)); }
+  closeFollowup(e, id, status = 'closed') {
+    if (!/^E\d+$/u.test(id) || !['closed', 'resolved'].includes(status)) return false;
+    this.db.prepare('DELETE FROM semantic_vectors WHERE owner=? AND memory_id=?').run(partition(e), id);
+    return this.db.prepare('UPDATE episodes SET status=?,updated_at=? WHERE owner=? AND id=?').run(status, e.receivedAt ?? Date.now(), partition(e), Number(id.slice(1))).changes > 0;
+  }
+  dueFollowup(e, now, groupPublic = false) {
+    const p = this.profile(e); if (!p.followups || !p.auto_memory) return undefined;
+    if (this.db.prepare('SELECT 1 FROM episodes WHERE owner=? AND asked_at>?').get(partition(e), now - 86400000)) return undefined;
+    return this.db.prepare(`SELECT 'E'||id AS id,text,evidence,due_at,created_at FROM episodes WHERE owner=? AND status='open' AND asked_at=0 AND due_at<=? AND expires_at>?
+      ${groupPublic ? "AND audience='group'" : ''} ORDER BY due_at LIMIT 1`).get(partition(e), now, now);
+  }
+  claimFollowup(e, id, now, groupPublic = false) {
+    const candidate = this.dueFollowup(e, now, groupPublic);
+    if (candidate?.id !== id) return false;
+    return this.db.prepare("UPDATE episodes SET asked_at=? WHERE owner=? AND id=? AND asked_at=0 AND status='open'").run(now, partition(e), Number(id.slice(1))).changes > 0;
+  }
+  dueGroupFollowup(appId, targetId, now) {
+    const owners = this.db.prepare("SELECT DISTINCT owner FROM episodes WHERE json_extract(owner,'$[0]')=? AND json_extract(owner,'$[1]')='group' AND json_extract(owner,'$[2]')=?").all(appId, targetId);
+    for (const { owner } of owners) if (this.db.prepare('SELECT 1 FROM episodes WHERE owner=? AND asked_at>?').get(owner, now - 86400000)) return undefined;
+    for (const { owner } of owners) {
+      const [appId, scope, targetId, senderId] = JSON.parse(owner); const e = { appId, scope, targetId, senderId };
+      const plan = this.dueFollowup(e, now, true); if (plan) return { ...plan, owner: e };
+    }
   }
   used(e) { return this.db.prepare('SELECT used FROM replies WHERE event_key=?').get(eventKey(e))?.used ?? 0; }
   reserve(e, maximum, now) {

@@ -31,3 +31,5 @@ DeepSeek Harness packages, Cordis, Schemastery, js-yaml and their transitive dep
 silk-wasm 3.7.1 provides WAV/PCM to SILK conversion and retains its package license and embedded codec notices. Piper voice models, FFmpeg binaries and local speech servers are separate installations and are not redistributed in this package.
 
 The optional singing adapter uses the local HTTP API of ACE-Step.cpp (https://github.com/ServeurpersoCom/acestep.cpp). ACE-Step.cpp executables, GGUF weights and ACE-Step model assets retain their upstream licenses and are separate installations; they are not redistributed in this package.
+
+Local semantic retrieval uses @huggingface/transformers 4.3.2 (Apache-2.0) and its ONNX Runtime dependencies, which retain their upstream license files. The separately downloaded Xenova/paraphrase-multilingual-MiniLM-L12-v2 ONNX model is converted from sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 (Apache-2.0). Model files are not redistributed in this package. Sources: https://github.com/huggingface/transformers.js and https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 .
