@@ -27,6 +27,18 @@
       },
       "versions": [
         {
+          "version": "0.3.0-alpha.2",
+          "publishTimestamp": 1793369034,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/sidifeng/dsh-companion",
+            "commit": "55eb38dc76acd3d3d5eeff4b9e218c9ed7fdd585"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.2 <0.2.2"
+          }
+        },
+        {
           "version": "0.3.0-alpha.1",
           "publishTimestamp": 1793368519,
           "source": {
