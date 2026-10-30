@@ -1,0 +1,50 @@
+name: Check and publish
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run check
+      - run: npm test
+      - run: npm pack --ignore-scripts
+  publish:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: check
+    runs-on: ubuntu-latest
+    concurrency: companion-market-publish
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - id: index
+        run: node scripts/publish.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - if: steps.index.outputs.created == 'true'
+        run: npm pack --ignore-scripts
+      - if: steps.index.outputs.created == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.index.outputs.version }}
+          SOURCE_COMMIT: ${{ steps.index.outputs.commit }}
+        run: gh release create "v$VERSION" "dsh-companion-$VERSION.tgz" artifacts/index.json --target "$SOURCE_COMMIT" --prerelease --title "DSH Companion $VERSION" --notes-file RELEASE_NOTES.md

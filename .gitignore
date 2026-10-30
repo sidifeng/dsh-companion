@@ -1,0 +1,10 @@
+node_modules/
+.cache/
+.local/
+artifacts/
+coverage/
+*.tgz
+*.sqlite*
+.env*
+!.env.example
+*.log

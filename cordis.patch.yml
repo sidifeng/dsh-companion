@@ -1,0 +1,21 @@
+# 默认关闭：配置测试白名单并停用原 im-qqbot 后启用，避免双连接。
+- insert:
+    - id: dsh-companion
+      name: dsh-companion
+      config:
+        enabled: false
+        appId: ''
+        appSecret: ''
+        provider: deepseek-official
+        model: deepseek-flash
+        streaming: false
+        requireMention: true
+        access:
+          c2cMode: allowlist
+          c2cAllow: []
+          groupMode: allowlist
+          groupAllow: []
+        companion:
+          persona: '自然、温和、有自己的兴趣。根据共同经历交流；没有依据时不假装记得。'
+          maxMessages: 3
+          intervalMs: 1200

@@ -1,0 +1,67 @@
+{
+  "name": "dsh-companion",
+  "version": "0.2.0-alpha.1",
+  "description": "QQ 官方机器人：DeepSeek 对话、人物记忆、图片、视频抽帧与本地语音",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "engines": {
+    "node": ">=22.13.0",
+    "dsh": ">=0.2.1-rc.2 <0.2.2"
+  },
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "qqbot",
+    "memory"
+  ],
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "test": "node --test",
+    "check": "node scripts/check.mjs",
+    "doctor": "node scripts/doctor.mjs",
+    "demo": "node scripts/demo.mjs",
+    "prepack": "npm run check && npm test"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "3.18.1",
+    "@tencent-connect/dsh-qqbot": "0.5.3",
+    "@tencent-connect/qqbot-nodejs": "1.0.5",
+    "js-yaml": "4.1.0",
+    "silk-wasm": "3.7.1"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-agent": "^0.1.0-rc.6 || ^0.2.1-rc.2",
+    "@deepseek-ai/dsh-llm": "^0.1.0-rc.6 || ^0.2.1-rc.2",
+    "@deepseek-ai/dsh-session": "^0.1.0-rc.6 || ^0.2.1-rc.2"
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-plugin-market-index": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-system-prompt": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sidifeng/dsh-companion.git"
+  },
+  "homepage": "https://github.com/sidifeng/dsh-companion",
+  "bugs": {
+    "url": "https://github.com/sidifeng/dsh-companion/issues"
+  }
+}
